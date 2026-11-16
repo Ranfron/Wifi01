@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WifiP2P</string>
+    <string name="share_label">WifiP2P से भेजें</string>
+
+    <!-- Home -->
+    <string name="main_subtitle">Wi-Fi Direct से दो फ़ोन के बीच तेज़ फ़ाइल ट्रांसफ़र। इंटरनेट या मोबाइल डेटा की ज़रूरत नहीं।</string>
+    <string name="send_files">फ़ाइलें भेजें</string>
+    <string name="receive_files">फ़ाइलें पाएँ</string>
+    <string name="setup_title">शुरू करने से पहले</string>
+    <string name="check_permission_ok">अनुमतियाँ मिल गई हैं</string>
+    <string name="check_permission_missing">आस-पास के डिवाइस खोजने के लिए अनुमति चाहिए</string>
+    <string name="check_wifi_ok">Wi-Fi चालू है</string>
+    <string name="check_wifi_off">Wi-Fi बंद है। इसे चालू करें (किसी नेटवर्क से जुड़ा होना ज़रूरी नहीं)।</string>
+    <string name="check_location_ok">लोकेशन चालू है</string>
+    <string name="check_location_off">लोकेशन बंद है। आस-पास के डिवाइस खोजने के लिए Android को इसकी ज़रूरत है।</string>
+    <string name="grant">अनुमति दें</string>
+    <string name="tips_title">सबसे तेज़ स्पीड के लिए टिप्स</string>
+    <string name="tips">1. पाने वाले फ़ोन में पहले “फ़ाइलें पाएँ” खोलें।\n2. भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, डिवाइस खोजें और पाने वाले फ़ोन पर टैप करें। पाने वाले फ़ोन पर निमंत्रण स्वीकार करें।\n3. किसी भी प्रकार की जितनी चाहें उतनी फ़ाइलें चुनें, या Gallery/Files से सीधे “WifiP2P से भेजें” द्वारा शेयर करें।\n4. दोनों फ़ोन पास रखें (कुछ मीटर के भीतर) और दोनों की स्क्रीन चालू रखें। Android 10+ फ़ोन अपने-आप तेज़ 5 GHz बैंड इस्तेमाल करते हैं।\n5. मिली हुई फ़ाइलें Downloads/WifiP2P में सेव होती हैं।</string>
+
+    <!-- Common -->
+    <string name="cancel">रद्द करें</string>
+    <string name="try_again">फिर कोशिश करें</string>
+    <string name="open_settings">सेटिंग्स</string>
+    <string name="permission_title">अनुमति ज़रूरी है</string>
+    <string name="permission_message">आस-पास के फ़ोन खोजने और उनसे जुड़ने के लिए Android को “Nearby devices” (या Location) की अनुमति चाहिए। ऐप आपकी लोकेशन कभी नहीं पढ़ता। Android 9 और उससे पुराने वर्ज़न में मिली फ़ाइलें सेव करने के लिए स्टोरेज की अनुमति भी चाहिए।</string>
+    <string name="leave_title">ट्रांसफ़र रोकें?</string>
+    <string name="leave_message">ट्रांसफ़र चल रहा है। अभी बाहर निकले तो यह रद्द हो जाएगा।</string>
+    <string name="leave_confirm">रोकें और बाहर निकलें</string>
+    <string name="status_preparing">तैयार हो रहा है…</string>
+    <string name="status_connected_to">%1$s से जुड़ गया</string>
+    <string name="status_error">कुछ गड़बड़ हो गई</string>
+    <string name="unknown_device">दूसरा फ़ोन</string>
+    <string name="banner_wifi_off">Wi-Fi बंद है। Wi-Fi Direct इस्तेमाल करने के लिए इसे चालू करें।</string>
+    <string name="banner_location_off">लोकेशन बंद है। आस-पास के फ़ोन खोजने के लिए Android को इसकी ज़रूरत है।</string>
+
+    <!-- Send screen -->
+    <string name="send_title">फ़ाइलें भेजें</string>
+    <string name="send_status_wifi_off">Wi-Fi बंद है</string>
+    <string name="send_detail_wifi_off">पाने वाला फ़ोन खोजने के लिए Wi-Fi चालू करें।</string>
+    <string name="send_status_ready">पाने वाला फ़ोन खोजें</string>
+    <string name="send_detail_ready">पक्का करें कि दूसरा फ़ोन “फ़ाइलें पाएँ” पर है, फिर खोजें दबाएँ।</string>
+    <string name="send_detail_searching">आस-पास के फ़ोन खोजे जा रहे हैं…</string>
+    <string name="send_status_connecting">%1$s से जुड़ रहा है…</string>
+    <string name="send_detail_connecting">अगर दूसरे फ़ोन पर पूछा जाए तो निमंत्रण स्वीकार करें।</string>
+    <string name="send_detail_connected">भेजने के लिए फ़ाइलें चुनें।</string>
+    <string name="send_detail_shared">%1$d शेयर की गई फ़ाइल(ें) अभी भेजी जाएँगी।</string>
+    <string name="send_detail_preparing">Wi-Fi Direct शुरू हो रहा है…</string>
+    <string name="search_devices">डिवाइस खोजें</string>
+    <string name="searching">खोज रहा है…</string>
+    <string name="disconnect">डिस्कनेक्ट करें</string>
+    <string name="choose_files">भेजने के लिए फ़ाइलें चुनें</string>
+    <string name="empty_peers">अभी कोई फ़ोन नहीं मिला।\nदूसरे फ़ोन पर “फ़ाइलें पाएँ” खोलें, फिर खोजें दबाएँ।</string>
+    <string name="empty_searching">फ़ोन खोजे जा रहे हैं…</string>
+    <string name="empty_connecting">दूसरे फ़ोन के स्वीकार करने का इंतज़ार…</string>
+    <string name="empty_send_connected">जुड़ गया। नीचे “भेजने के लिए फ़ाइलें चुनें” दबाएँ।</string>
+    <string name="connect">जुड़ें</string>
+    <string name="peer_available">उपलब्ध</string>
+    <string name="peer_connected">जुड़ा हुआ</string>
+    <string name="peer_invited">निमंत्रण भेजा</string>
+    <string name="peer_failed">विफल</string>
+    <string name="peer_unavailable">उपलब्ध नहीं</string>
+
+    <!-- Receive screen -->
+    <string name="receive_title">फ़ाइलें पाएँ</string>
+    <string name="receive_status_wifi_off">Wi-Fi बंद है</string>
+    <string name="receive_detail_wifi_off">फ़ाइलें पाने के लिए Wi-Fi चालू करें।</string>
+    <string name="receive_status_ready">फ़ाइलें पाने के लिए तैयार</string>
+    <string name="receive_detail_ready">भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, “%1$s” खोजें और उस पर टैप करें। यहाँ निमंत्रण स्वीकार करें।</string>
+    <string name="receive_detail_preparing">तेज़ Wi-Fi Direct कनेक्शन पॉइंट बन रहा है…</string>
+    <string name="receive_detail_connected">फ़ाइलों का इंतज़ार है। ये Downloads/WifiP2P में सेव होंगी।</string>
+    <string name="receive_empty">मिली हुई फ़ाइलें यहाँ दिखेंगी।\nये Downloads/WifiP2P में सेव होती हैं।</string>
+    <string name="mode_fast">तेज़ मोड: 5 GHz बैंड</string>
+    <string name="mode_standard">सामान्य मोड (5 GHz बैंड उपलब्ध नहीं था)</string>
+    <string name="mode_compat">कम्पैटिबिलिटी मोड (डिफ़ॉल्ट बैंड, पुराने फ़ोन के साथ चलता है)</string>
+    <string name="mode_switch_to_compat">कम्पैटिबिलिटी मोड इस्तेमाल करें</string>
+    <string name="mode_switch_to_fast">तेज़ 5 GHz मोड इस्तेमाल करें</string>
+    <string name="open_folder">फ़ोल्डर खोलें</string>
+    <string name="stop_receiving">रोकें</string>
+    <string name="no_app_to_open">इसे खोलने के लिए कोई ऐप नहीं मिला।</string>
+
+    <!-- Transfer progress -->
+    <string name="cancel_transfer">रद्द करें</string>
+    <string name="speed_and_eta">%1$s • %2$s बाकी</string>
+    <string name="file_progress">%2$s में से %1$s (%3$d%%)</string>
+    <string name="batch_progress">फ़ाइल %1$d / %2$d • कुल %4$s में से %3$s</string>
+    <string name="state_waiting">इंतज़ार में • %1$s</string>
+    <string name="state_sending">भेज रहा है… • %1$s</string>
+    <string name="state_receiving">पा रहा है… • %1$s</string>
+    <string name="state_sent">भेज दी • %1$s</string>
+    <string name="state_saved">सेव हो गई • %1$s • खोलने के लिए टैप करें</string>
+    <string name="state_failed">विफल</string>
+    <string name="state_cancelled">रद्द की गई</string>
+
+    <!-- Messages -->
+    <string name="msg_connected_to">%1$s से जुड़ गया</string>
+    <string name="msg_connection_ended">कनेक्शन खत्म हो गया</string>
+    <string name="msg_search_failed">खोज विफल: %1$s</string>
+    <string name="msg_connect_failed">जुड़ नहीं सका: %1$s</string>
+    <string name="msg_connect_timeout">दूसरे फ़ोन ने समय पर स्वीकार नहीं किया। बार-बार ऐसा हो तो पाने वाले फ़ोन को कम्पैटिबिलिटी मोड पर करें।</string>
+    <string name="msg_unreachable">दूसरे फ़ोन का ऐप नहीं मिल रहा। पक्का करें कि वह “फ़ाइलें पाएँ” स्क्रीन पर है।</string>
+    <string name="msg_not_connected">किसी रिसीवर से जुड़ा नहीं है।</string>
+    <string name="msg_cancelled">रद्द की गई</string>
+    <string name="msg_sent_summary">%2$d में से %1$d फ़ाइलें भेजी गईं</string>
+    <string name="msg_received_summary">%2$d में से %1$d फ़ाइलें मिलीं</string>
+
+    <!-- Errors -->
+    <string name="error_p2p_unsupported">यह फ़ोन Wi-Fi Direct सपोर्ट नहीं करता।</string>
+    <string name="error_group_failed">Wi-Fi Direct शुरू नहीं हो सका। Wi-Fi बंद करके फिर चालू करें और दोबारा कोशिश करें।</string>
+    <string name="error_connection_lost">कनेक्शन टूट गया</string>
+    <string name="p2p_error_unsupported">इस फ़ोन पर Wi-Fi Direct सपोर्टेड नहीं है।</string>
+    <string name="p2p_error_busy">Wi-Fi Direct व्यस्त है। थोड़ा रुककर फिर कोशिश करें।</string>
+    <string name="p2p_error_generic">Wi-Fi Direct में गड़बड़। Wi-Fi बंद करके चालू करें और फिर कोशिश करें।</string>
+
+    <!-- Notification -->
+    <string name="notification_channel_name">फ़ाइल ट्रांसफ़र</string>
+    <string name="notification_channel_description">फ़ाइल ट्रांसफ़र की प्रगति दिखाता है।</string>
+    <string name="notification_title_send">फ़ाइलें भेजी जा रही हैं</string>
+    <string name="notification_title_receive">फ़ाइलें मिल रही हैं</string>
+    <string name="notification_connected">%1$s से जुड़ा है</string>
+    <string name="notification_ready_send">पाने वाला फ़ोन खोजा जा रहा है</string>
+    <string name="notification_ready_receive">भेजने वाले का इंतज़ार है</string>
+    <string name="notification_preparing">तैयार हो रहा है…</string>
+    <string name="notification_progress">फ़ाइल %1$d / %2$d • %3$s • %4$s बाकी</string>
+    <string name="notification_stop">रोकें</string>
+</resources>

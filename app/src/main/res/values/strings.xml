@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WifiP2P</string>
+    <string name="share_label">Send with WifiP2P</string>
+
+    <!-- Home -->
+    <string name="main_subtitle">Fast file transfer between two phones over Wi-Fi Direct. No internet or mobile data needed.</string>
+    <string name="send_files">Send files</string>
+    <string name="receive_files">Receive files</string>
+    <string name="setup_title">Before you start</string>
+    <string name="check_permission_ok">Permissions granted</string>
+    <string name="check_permission_missing">Permission needed to find nearby devices</string>
+    <string name="check_wifi_ok">Wi-Fi is on</string>
+    <string name="check_wifi_off">Wi-Fi is off. Turn it on (it does not need to be connected to a network).</string>
+    <string name="check_location_ok">Location is on</string>
+    <string name="check_location_off">Location is off. Android needs it to find nearby devices.</string>
+    <string name="grant">Grant</string>
+    <string name="tips_title">Tips for maximum speed</string>
+    <string name="tips">1. On the receiving phone open “Receive files” first.\n2. On the sending phone open “Send files”, search, and tap the receiving phone. Accept the invitation on the receiving phone.\n3. Choose any number of files of any type, or share them straight from Gallery or Files with “Send with WifiP2P”.\n4. Keep both phones close (a few metres) with both screens on. Phones with Android 10+ use the fast 5 GHz band automatically.\n5. Received files are saved in Downloads/WifiP2P.</string>
+
+    <!-- Common -->
+    <string name="cancel">Cancel</string>
+    <string name="try_again">Try again</string>
+    <string name="open_settings">Settings</string>
+    <string name="permission_title">Permission needed</string>
+    <string name="permission_message">To find and connect to nearby phones Android requires the “Nearby devices” (or Location) permission. The app never reads your location. On Android 9 and older it also needs storage access to save the received files.</string>
+    <string name="leave_title">Stop transfer?</string>
+    <string name="leave_message">A transfer is running. If you leave now it will be cancelled.</string>
+    <string name="leave_confirm">Stop and leave</string>
+    <string name="status_preparing">Getting ready…</string>
+    <string name="status_connected_to">Connected to %1$s</string>
+    <string name="status_error">Something went wrong</string>
+    <string name="unknown_device">other phone</string>
+    <string name="banner_wifi_off">Wi-Fi is off. Turn it on to use Wi-Fi Direct.</string>
+    <string name="banner_location_off">Location is off. Android needs it to find nearby phones.</string>
+
+    <!-- Send screen -->
+    <string name="send_title">Send files</string>
+    <string name="send_status_wifi_off">Wi-Fi is off</string>
+    <string name="send_detail_wifi_off">Turn on Wi-Fi to find the receiving phone.</string>
+    <string name="send_status_ready">Find the receiving phone</string>
+    <string name="send_detail_ready">Make sure the other phone is on “Receive files”, then tap Search.</string>
+    <string name="send_detail_searching">Searching for nearby phones…</string>
+    <string name="send_status_connecting">Connecting to %1$s…</string>
+    <string name="send_detail_connecting">Accept the invitation on the other phone if it asks.</string>
+    <string name="send_detail_connected">Choose the files to send.</string>
+    <string name="send_detail_shared">%1$d shared item(s) will be sent now.</string>
+    <string name="send_detail_preparing">Starting Wi-Fi Direct…</string>
+    <string name="search_devices">Search devices</string>
+    <string name="searching">Searching…</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="choose_files">Choose files to send</string>
+    <string name="empty_peers">No phones found yet.\nOn the other phone open “Receive files”, then tap Search.</string>
+    <string name="empty_searching">Looking for phones…</string>
+    <string name="empty_connecting">Waiting for the other phone to accept…</string>
+    <string name="empty_send_connected">Connected. Tap “Choose files to send” below.</string>
+    <string name="connect">Connect</string>
+    <string name="peer_available">Available</string>
+    <string name="peer_connected">Connected</string>
+    <string name="peer_invited">Invited</string>
+    <string name="peer_failed">Failed</string>
+    <string name="peer_unavailable">Unavailable</string>
+
+    <!-- Receive screen -->
+    <string name="receive_title">Receive files</string>
+    <string name="receive_status_wifi_off">Wi-Fi is off</string>
+    <string name="receive_detail_wifi_off">Turn on Wi-Fi to receive files.</string>
+    <string name="receive_status_ready">Ready to receive</string>
+    <string name="receive_detail_ready">On the sending phone open “Send files”, search for “%1$s” and tap it. Accept the invitation here.</string>
+    <string name="receive_detail_preparing">Creating a fast Wi-Fi Direct connection point…</string>
+    <string name="receive_detail_connected">Waiting for files. They are saved in Downloads/WifiP2P.</string>
+    <string name="receive_empty">Received files appear here.\nThey are saved in Downloads/WifiP2P.</string>
+    <string name="mode_fast">Fast mode: 5 GHz band</string>
+    <string name="mode_standard">Standard mode (the 5 GHz band was not available)</string>
+    <string name="mode_compat">Compatibility mode (default band, works with older phones)</string>
+    <string name="mode_switch_to_compat">Use compatibility mode</string>
+    <string name="mode_switch_to_fast">Use fast 5 GHz mode</string>
+    <string name="open_folder">Open folder</string>
+    <string name="stop_receiving">Stop</string>
+    <string name="no_app_to_open">No app found to open this.</string>
+
+    <!-- Transfer progress -->
+    <string name="cancel_transfer">Cancel</string>
+    <string name="speed_and_eta">%1$s • %2$s left</string>
+    <string name="file_progress">%1$s of %2$s (%3$d%%)</string>
+    <string name="batch_progress">File %1$d of %2$d • %3$s of %4$s in total</string>
+    <string name="state_waiting">Waiting • %1$s</string>
+    <string name="state_sending">Sending… • %1$s</string>
+    <string name="state_receiving">Receiving… • %1$s</string>
+    <string name="state_sent">Sent • %1$s</string>
+    <string name="state_saved">Saved • %1$s • tap to open</string>
+    <string name="state_failed">Failed</string>
+    <string name="state_cancelled">Cancelled</string>
+
+    <!-- Messages -->
+    <string name="msg_connected_to">Connected to %1$s</string>
+    <string name="msg_connection_ended">Connection ended</string>
+    <string name="msg_search_failed">Search failed: %1$s</string>
+    <string name="msg_connect_failed">Could not connect: %1$s</string>
+    <string name="msg_connect_timeout">The other phone did not accept in time. If this keeps failing, switch the receiving phone to compatibility mode.</string>
+    <string name="msg_unreachable">Cannot reach the app on the other phone. Make sure it is on the “Receive files” screen.</string>
+    <string name="msg_not_connected">Not connected to a receiver.</string>
+    <string name="msg_cancelled">Cancelled</string>
+    <string name="msg_sent_summary">Sent %1$d of %2$d files</string>
+    <string name="msg_received_summary">Received %1$d of %2$d files</string>
+
+    <!-- Errors -->
+    <string name="error_p2p_unsupported">This phone does not support Wi-Fi Direct.</string>
+    <string name="error_group_failed">Could not start Wi-Fi Direct. Turn Wi-Fi off and on, then try again.</string>
+    <string name="error_connection_lost">Connection lost</string>
+    <string name="p2p_error_unsupported">Wi-Fi Direct is not supported on this phone.</string>
+    <string name="p2p_error_busy">Wi-Fi Direct is busy. Wait a moment and try again.</string>
+    <string name="p2p_error_generic">Wi-Fi Direct error. Turn Wi-Fi off and on and try again.</string>
+
+    <!-- Notification -->
+    <string name="notification_channel_name">File transfer</string>
+    <string name="notification_channel_description">Shows the progress of file transfers.</string>
+    <string name="notification_title_send">Sending files</string>
+    <string name="notification_title_receive">Receiving files</string>
+    <string name="notification_connected">Connected to %1$s</string>
+    <string name="notification_ready_send">Looking for the receiving phone</string>
+    <string name="notification_ready_receive">Waiting for the sender</string>
+    <string name="notification_preparing">Getting ready…</string>
+    <string name="notification_progress">File %1$d of %2$d • %3$s • %4$s left</string>
+    <string name="notification_stop">Stop</string>
+</resources>
