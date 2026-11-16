@@ -67,7 +67,7 @@
     <string name="receive_detail_wifi_off">फ़ाइलें पाने के लिए Wi-Fi चालू करें।</string>
     <string name="receive_status_ready">फ़ाइलें पाने के लिए तैयार</string>
     <string name="receive_detail_ready">भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, “%1$s” खोजें और उस पर टैप करें। यहाँ निमंत्रण स्वीकार करें।</string>
-    <string name="receive_detail_preparing">तेज़ Wi-Fi Direct कनेक्शन पॉइंट बन रहा है…</string>
+    <string name="receive_detail_preparing">अनुकूल Wi-Fi Direct कनेक्शन पॉइंट बन रहा है…</string>
     <string name="receive_detail_connected">फ़ाइलों का इंतज़ार है। ये Downloads/WifiP2P में सेव होंगी।</string>
     <string name="receive_empty">मिली हुई फ़ाइलें यहाँ दिखेंगी।\nये Downloads/WifiP2P में सेव होती हैं।</string>
     <string name="mode_fast">तेज़ मोड: 5 GHz बैंड</string>

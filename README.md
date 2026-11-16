@@ -13,7 +13,7 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
 | The file was first copied to the cache with a **1 KB** buffer, then sent | Streamed straight from the source: no temp copy, 512 KB chunks |
 | Disk and network worked strictly one after the other | **Pipelined I/O**: while the network sends chunk N the disk already reads N+1..N+6 (and the reverse when receiving) |
 | A log line was emitted for every chunk (slowed the transfer, grew the UI without bound) | Progress is throttled to 10 updates per second; live speed and ETA are shown |
-| Wi-Fi Direct group on the default band (usually 2.4 GHz) | Receiver requests a **5 GHz group** on Android 10+ (often several times faster than 2.4 GHz), with a compatibility switch for old phones |
+| Wi-Fi Direct group on the default band (usually 2.4 GHz) | Receiver starts with the **default Wi-Fi Direct band** for compatibility; 5 GHz is an optional speed mode |
 | Phone could throttle the radio / CPU after the screen turned off | Foreground service + CPU wake lock + Wi-Fi lock, progress notification with a Stop button |
 | Receiver had to press "Create group" and "Start listening" for every file, 15 s accept timeout | Fully automatic; the link heals itself after cancel, error or reconnect |
 | Only worked if the *receiver* became group owner | Either phone can be group owner - the TCP role and the transfer role are independent |
@@ -37,14 +37,14 @@ Toolchain is unchanged from 1.0 (AGP 9.0.0, Gradle 9.3.1, Kotlin 2.3.10, minSdk 
 
 ## How to use
 
-1. **Receiver**: Home > *Receive files*. Nothing else to press - the phone creates a fast Wi-Fi Direct group and shows its name.
+1. **Receiver**: Home > *Receive files*. Nothing else to press - the phone creates a compatible Wi-Fi Direct group and shows its name.
 2. **Sender**: Home > *Send files* > *Search devices* > tap the receiver. Accept the invitation on the receiver.
 3. *Choose files to send* (any number, any type) - or share files from Gallery / Files with *Send with WifiP2P*
    (they are sent as soon as the connection is up).
 4. Received files are in **Downloads/WifiP2P**.
 
 Tips for maximum speed: stay within a few metres, keep both screens on, and use phones with Android 10+ on both sides
-(5 GHz). If an old phone cannot connect to a 5 GHz group, switch the receiver to *compatibility mode* on its screen.
+(5 GHz). Use fast mode only when both phones support the receiver’s 5 GHz Wi-Fi Direct channel; otherwise keep the receiver in compatibility mode.
 Real-world speed is set by the Wi-Fi Direct radio link, not by the app. In loopback tests on a PC the engine reached
 about 1 GB/s (memory to memory) and several hundred MB/s (disk to disk) including CRC verification - far above what
 Wi-Fi Direct delivers - so on a phone the radio, not the transfer engine, is the bottleneck. Actual phone speeds were
@@ -54,7 +54,7 @@ not measured here.
 
 ```
 transfer/   pure Kotlin engine (no Android classes): protocol, sender, receiver, pipelined copy, link runner
-p2p/        Wi-Fi Direct controller (5 GHz group, discovery, connect, cleanup)
+p2p/        Wi-Fi Direct controller (compatible default band, optional 5 GHz, discovery, connect)
 hub/        process-wide session state (StateFlow) - survives rotation, owns P2P + link
 service/    foreground service: notification, wake lock, Wi-Fi lock
 storage/    content-Uri file sources, Downloads sink (MediaStore / legacy), file opener
@@ -81,7 +81,7 @@ role mismatch, stalled receiver watchdog, hostile peers (protocol violations, pa
 
 ## Known limits
 
-* Wi-Fi Direct behaviour differs between phone makers; the 5 GHz request falls back to the default group automatically.
+* Wi-Fi Direct behaviour differs between phone makers; compatibility mode is the default; 5 GHz is optional because the receiver cannot verify the sender’s band support in advance.
 * The progress notification needs the notification permission on Android 13+ (the transfer works without it).
 * Android 15+ limits data-sync foreground services to about 6 hours per session.
 * No resume of an interrupted file (it is deleted and can be sent again).

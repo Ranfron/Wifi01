@@ -8,12 +8,12 @@ object Settings {
     private const val KEY_FAST_MODE = "fast_mode"
 
     /**
-     * Receiver: ask for a Wi-Fi Direct group on the 5 GHz band (Android 10+). It is several times
-     * faster than 2.4 GHz, but an old phone that only supports 2.4 GHz cannot join it - switching
-     * this off ("compatibility mode") lets such a phone connect.
+     * Compatibility mode is the safe default: the receiving phone creates a group on the system's
+     * default band. 5 GHz remains an opt-in because the receiver cannot know whether every sender
+     * supports the selected 5 GHz channels before it creates the group.
      */
     fun fastMode(context: Context): Boolean {
-        return context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_FAST_MODE, true)
+        return context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_FAST_MODE, false)
     }
 
     fun setFastMode(context: Context, enabled: Boolean) {

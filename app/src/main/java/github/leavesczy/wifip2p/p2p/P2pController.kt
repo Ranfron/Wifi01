@@ -15,6 +15,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
@@ -40,6 +41,8 @@ class P2pController(context: Context, private val listener: Listener) {
 
         /** [info] is null when no group exists. */
         fun onConnectionInfo(info: WifiP2pInfo?)
+        /** Reports whether this device currently has a local P2P group, even before a client joins. */
+        fun onGroupInfo(exists: Boolean)
         fun onChannelLost()
     }
 
@@ -52,6 +55,7 @@ class P2pController(context: Context, private val listener: Listener) {
     private var started = false
     private var gotState = false
     private var channelResets = 0
+    private var refreshSequence = 0L
 
     val isSupported: Boolean
         get() = manager != null
@@ -62,6 +66,7 @@ class P2pController(context: Context, private val listener: Listener) {
             return
         }
         started = true
+        log("START api=${Build.VERSION.SDK_INT} model=${Build.MODEL}")
         channel = newChannel(m)
 
         val filter = IntentFilter().apply {
@@ -95,6 +100,7 @@ class P2pController(context: Context, private val listener: Listener) {
             return
         }
         started = false
+        refreshSequence++ // invalidate callbacks already in flight
         receiver?.let {
             try {
                 appContext.unregisterReceiver(it)
@@ -131,39 +137,118 @@ class P2pController(context: Context, private val listener: Listener) {
         if (!started) {
             return
         }
+        val requestId = ++refreshSequence
         try {
             m.requestConnectionInfo(ch) { info ->
-                listener.onConnectionInfo(if (info != null && info.groupFormed) info else null)
+                if (requestId == refreshSequence) {
+                    log("CONNECTION_INFO groupFormed=${info?.groupFormed} isGroupOwner=${info?.isGroupOwner} ownerAddress=${info?.groupOwnerAddress}")
+                    listener.onConnectionInfo(if (info != null && info.groupFormed) info else null)
+                } else {
+                    log("ignored stale CONNECTION_INFO callback request=$requestId latest=$refreshSequence")
+                }
             }
-        } catch (_: SecurityException) {
+            m.requestGroupInfo(ch) { group ->
+                if (requestId == refreshSequence) {
+                    val clients = group?.clientList?.joinToString { "${it.deviceName}:${it.status}" }.orEmpty()
+                    log("GROUP_INFO exists=${group != null} isOwner=${group?.isGroupOwner} clients=${group?.clientList?.size ?: 0} members=[$clients] network=${group?.networkName}")
+                    listener.onGroupInfo(group != null)
+                } else {
+                    log("ignored stale GROUP_INFO callback request=$requestId latest=$refreshSequence")
+                }
+            }
+        } catch (e: SecurityException) {
+            log("REFRESH securityException=${e.message}")
         }
     }
 
     fun discover(onResult: (ok: Boolean, reason: Int) -> Unit) {
-        val m = manager ?: return
-        val ch = channel ?: return
+        val m = manager
+        val ch = channel
+        if (m == null || ch == null || !started) {
+            onResult(false, WifiP2pManager.ERROR)
+            return
+        }
+        log("DISCOVER requested")
         try {
-            m.discoverPeers(ch, action(onResult))
-        } catch (_: SecurityException) {
+            m.discoverPeers(ch, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    log("DISCOVER action=SUCCESS")
+                    onResult(true, 0)
+                }
+                override fun onFailure(reason: Int) {
+                    log("DISCOVER action=FAILURE reason=$reason")
+                    onResult(false, reason)
+                }
+            })
+        } catch (e: SecurityException) {
+            log("DISCOVER securityException=${e.message}")
             onResult(false, WifiP2pManager.ERROR)
         }
     }
 
-    fun stopDiscovery() {
-        val m = manager ?: return
-        val ch = channel ?: return
+    /**
+     * Wait until peer discovery has stopped before submitting the connection request.
+     * Some Android Wi-Fi P2P implementations briefly return BUSY while discovery is changing.
+     */
+    fun stopDiscovery(onComplete: () -> Unit = {}) {
+        stopDiscoveryAttempt(onComplete, retriesLeft = 4)
+    }
+
+    private fun stopDiscoveryAttempt(onComplete: () -> Unit, retriesLeft: Int) {
+        val m = manager
+        val ch = channel
+        if (m == null || ch == null || !started) {
+            onComplete()
+            return
+        }
         try {
-            m.stopPeerDiscovery(ch, NOOP)
-        } catch (_: SecurityException) {
+            m.stopPeerDiscovery(ch, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    log("STOP_DISCOVERY action=SUCCESS")
+                    onComplete()
+                }
+
+                override fun onFailure(reason: Int) {
+                    log("STOP_DISCOVERY action=FAILURE reason=$reason retriesLeft=$retriesLeft")
+                    if (reason == WifiP2pManager.BUSY && retriesLeft > 0) {
+                        main.postDelayed({ stopDiscoveryAttempt(onComplete, retriesLeft - 1) }, 350L)
+                    } else {
+                        // ERROR commonly means discovery is already stopped; do not block connect.
+                        onComplete()
+                    }
+                }
+            })
+        } catch (e: SecurityException) {
+            log("STOP_DISCOVERY securityException=${e.message}")
+            onComplete()
         }
     }
 
     fun connect(address: String, onResult: (ok: Boolean, reason: Int) -> Unit) {
-        val m = manager ?: return
-        val ch = channel ?: return
+        val m = manager
+        val ch = channel
+        if (m == null || ch == null || !started) {
+            onResult(false, WifiP2pManager.ERROR)
+            return
+        }
+        log("CONNECT requested peerAddress=$address")
         try {
-            m.connect(ch, buildConnectConfig(address), action(onResult))
-        } catch (_: SecurityException) {
+            m.connect(ch, buildConnectConfig(address), object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    // Android accepted the connect request; it does NOT mean group formation is complete.
+                    log("CONNECT action=SUCCESS peerAddress=$address; waiting for peer/group callback")
+                    onResult(true, 0)
+                }
+                override fun onFailure(reason: Int) {
+                    log("CONNECT action=FAILURE peerAddress=$address reason=$reason")
+                    onResult(false, reason)
+                }
+            })
+        } catch (e: SecurityException) {
+            log("CONNECT securityException=${e.message}")
+            onResult(false, WifiP2pManager.ERROR)
+        } catch (e: IllegalArgumentException) {
+            log("CONNECT illegalArgument=${e.message}")
             onResult(false, WifiP2pManager.ERROR)
         }
     }
@@ -212,6 +297,7 @@ class P2pController(context: Context, private val listener: Listener) {
     private fun handle(intent: Intent) {
         when (intent.action) {
             WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
+                log("BROADCAST P2P_STATE_CHANGED")
                 gotState = true
                 val state = intent.getIntExtra(
                     WifiP2pManager.EXTRA_WIFI_STATE, WifiP2pManager.WIFI_P2P_STATE_DISABLED
@@ -219,13 +305,20 @@ class P2pController(context: Context, private val listener: Listener) {
                 listener.onP2pStateChanged(state == WifiP2pManager.WIFI_P2P_STATE_ENABLED)
             }
 
-            WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> requestPeers()
-            WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> refresh()
+            WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
+                log("BROADCAST PEERS_CHANGED")
+                requestPeers()
+            }
+            WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                log("BROADCAST CONNECTION_CHANGED")
+                refresh()
+            }
             WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
                 val device = IntentCompat.getParcelableExtra(
                     intent, WifiP2pManager.EXTRA_WIFI_P2P_DEVICE, WifiP2pDevice::class.java
                 )
                 if (device != null) {
+                    log("THIS_DEVICE name=${device.deviceName} address=${device.deviceAddress} status=${device.status}")
                     listener.onThisDevice(device.deviceName.orEmpty(), device.deviceAddress.orEmpty())
                 }
             }
@@ -234,6 +327,7 @@ class P2pController(context: Context, private val listener: Listener) {
                 val state = intent.getIntExtra(
                     WifiP2pManager.EXTRA_DISCOVERY_STATE, WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED
                 )
+                log("BROADCAST DISCOVERY state=$state")
                 listener.onDiscovery(state == WifiP2pManager.WIFI_P2P_DISCOVERY_STARTED)
             }
         }
@@ -245,12 +339,16 @@ class P2pController(context: Context, private val listener: Listener) {
         try {
             m.requestPeers(ch) { list ->
                 val devices: Collection<WifiP2pDevice> = list?.deviceList.orEmpty()
+                devices.forEach { device ->
+                    log("PEER name=${device.deviceName} address=${device.deviceAddress} status=${device.status}")
+                }
                 listener.onPeers(devices.map {
                     val address = it.deviceAddress.orEmpty()
                     P2pPeer(it.deviceName.orEmpty().ifBlank { address }, address, it.status)
                 })
             }
-        } catch (_: SecurityException) {
+        } catch (e: SecurityException) {
+            log("REQUEST_PEERS securityException=${e.message}")
         }
     }
 
@@ -263,6 +361,7 @@ class P2pController(context: Context, private val listener: Listener) {
         try {
             m.requestDeviceInfo(ch) { device ->
                 if (device != null) {
+                    log("THIS_DEVICE name=${device.deviceName} address=${device.deviceAddress} status=${device.status}")
                     listener.onThisDevice(device.deviceName.orEmpty(), device.deviceAddress.orEmpty())
                 }
             }
@@ -274,7 +373,10 @@ class P2pController(context: Context, private val listener: Listener) {
         var config: WifiP2pConfig? = null
         if (Build.VERSION.SDK_INT >= 29) {
             config = try {
-                WifiP2pConfig.Builder().setDeviceAddress(MacAddress.fromString(address)).build()
+                WifiP2pConfig.Builder()
+                    .setDeviceAddress(MacAddress.fromString(address))
+                    .enablePersistentMode(false)
+                    .build()
             } catch (_: Exception) {
                 null
             }
@@ -322,6 +424,7 @@ class P2pController(context: Context, private val listener: Listener) {
     }
 
     private fun doCreate(prefer5Ghz: Boolean, onDone: (GroupResult) -> Unit) {
+        log("CREATE_GROUP requested prefer5Ghz=$prefer5Ghz supports5Ghz=${supports5Ghz()}")
         val m = manager
         val ch = channel
         if (m == null || ch == null) {
@@ -337,8 +440,14 @@ class P2pController(context: Context, private val listener: Listener) {
             if (config != null) {
                 try {
                     m.createGroup(ch, config, object : WifiP2pManager.ActionListener {
-                        override fun onSuccess() = onDone(GroupResult(true, true, 0))
-                        override fun onFailure(reason: Int) = plainCreate(2, onDone)
+                        override fun onSuccess() {
+                            log("CREATE_GROUP 5GHz action=SUCCESS")
+                            onDone(GroupResult(true, true, 0))
+                        }
+                        override fun onFailure(reason: Int) {
+                            log("CREATE_GROUP 5GHz action=FAILURE reason=$reason; using default band")
+                            plainCreate(2, onDone)
+                        }
                     })
                     return
                 } catch (_: Exception) {
@@ -358,8 +467,12 @@ class P2pController(context: Context, private val listener: Listener) {
         }
         try {
             m.createGroup(ch, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() = onDone(GroupResult(true, false, 0))
+                override fun onSuccess() {
+                    log("CREATE_GROUP default action=SUCCESS")
+                    onDone(GroupResult(true, false, 0))
+                }
                 override fun onFailure(reason: Int) {
+                    log("CREATE_GROUP default action=FAILURE reason=$reason retriesLeft=$retriesLeft")
                     if (reason == WifiP2pManager.BUSY && retriesLeft > 0) {
                         main.postDelayed({ plainCreate(retriesLeft - 1, onDone) }, 1_000)
                     } else {
@@ -388,14 +501,12 @@ class P2pController(context: Context, private val listener: Listener) {
             .build()
     }
 
-    private fun action(callback: (ok: Boolean, reason: Int) -> Unit): WifiP2pManager.ActionListener {
-        return object : WifiP2pManager.ActionListener {
-            override fun onSuccess() = callback(true, 0)
-            override fun onFailure(reason: Int) = callback(false, reason)
-        }
+    private fun log(message: String) {
+        Log.i(TAG, message)
     }
 
     private companion object {
+        const val TAG = "WifiP2P"
         const val ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
         val NOOP = object : WifiP2pManager.ActionListener {

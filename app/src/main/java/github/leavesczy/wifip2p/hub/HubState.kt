@@ -70,7 +70,7 @@ data class HubState(
     val active: ActiveTransfer? = null,
     val message: UiMessage? = null,
     /** The user's choice: ask for a 5 GHz group (fast) instead of the default band. */
-    val fastMode: Boolean = true,
+    val fastMode: Boolean = false,
     /** The group really was created on the 5 GHz band. */
     val fiveGhz: Boolean = false
 )

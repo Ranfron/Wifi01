@@ -9,6 +9,8 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.ContextCompat
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.p2p.P2pController
@@ -76,6 +78,11 @@ class TransferHub(private val app: Application) {
     @Volatile
     private var creatingGroup = false
 
+    /** A local P2P group can exist before any client has joined it. */
+    @Volatile
+    private var receiverGroupPresent = false
+    private var lastGroupCreateAcceptedAtMs = 0L
+
     @Volatile
     private var connectingTo: String? = null
 
@@ -93,7 +100,9 @@ class TransferHub(private val app: Application) {
     private val groupWatchdog = Runnable {
         // createGroup() never answered (framework hiccup): give up this attempt and try again
         if (creatingGroup) {
+            Log.w(P2P_TAG, "receiver group creation timed out; retrying")
             creatingGroup = false
+            receiverGroupPresent = false
             scheduleEnsureGroup(500)
             publish()
         }
@@ -170,11 +179,38 @@ class TransferHub(private val app: Application) {
         connectingTo = peer.name
         errorText = null
         publish()
-        controller.stopDiscovery()
+        // Wait for Android to finish stopping peer discovery before sending the invitation.
+        if (peer.address.isBlank()) {
+            connectingTo = null
+            postMessage(app.getString(R.string.msg_connect_failed, reasonText(WifiP2pManager.ERROR)))
+            publish()
+            return
+        }
+        Log.i(P2P_TAG, "sender selected peer name=${peer.name} address=${peer.address} status=${peer.status}")
+        controller.stopDiscovery {
+            if (mutableState.value.mode != Mode.SEND || connectingTo != peer.name) {
+                return@stopDiscovery
+            }
+            submitConnect(controller, peer, retriesLeft = 3)
+        }
+    }
+
+    private fun submitConnect(controller: P2pController, peer: P2pPeer, retriesLeft: Int) {
         controller.connect(peer.address) { ok, reason ->
             if (ok) {
+                // onSuccess only confirms that Android accepted the request for processing.
+                Log.i(P2P_TAG, "sender connect request accepted by local framework for ${peer.name}")
                 scheduleConnectTimeout()
+                controller.refresh()
+            } else if (reason == WifiP2pManager.BUSY && retriesLeft > 0) {
+                Log.w(P2P_TAG, "sender connect returned BUSY; retrying peer=${peer.name} remaining=$retriesLeft")
+                main.postDelayed({
+                    if (mutableState.value.mode == Mode.SEND && connectingTo == peer.name) {
+                        submitConnect(controller, peer, retriesLeft - 1)
+                    }
+                }, 800L)
             } else {
+                Log.e(P2P_TAG, "sender connect request rejected reason=$reason for ${peer.name}")
                 connectingTo = null
                 postMessage(app.getString(R.string.msg_connect_failed, reasonText(reason)))
                 publish()
@@ -200,7 +236,9 @@ class TransferHub(private val app: Application) {
         errorText = null
         publish()
         p2p?.refresh()
-        ensureReceiverGroup()
+        if (!receiverGroupPresent && !groupFormed && !creatingGroup) {
+            ensureReceiverGroup()
+        }
     }
 
     /**
@@ -209,6 +247,8 @@ class TransferHub(private val app: Application) {
      */
     fun setFastMode(enabled: Boolean) {
         Settings.setFastMode(app, enabled)
+        receiverGroupPresent = false
+        lastGroupCreateAcceptedAtMs = 0L
         mutableState.update { it.copy(fastMode = enabled, fiveGhz = false) }
         if (mutableState.value.mode != Mode.RECEIVE) {
             return
@@ -298,6 +338,8 @@ class TransferHub(private val app: Application) {
                 stopLink()
                 groupFormed = false
                 creatingGroup = false
+                receiverGroupPresent = false
+                lastGroupCreateAcceptedAtMs = 0L
                 connectingTo = null
                 abortUnfinished(null)
                 mutableState.update { it.copy(peers = emptyList(), discovering = false) }
@@ -306,7 +348,8 @@ class TransferHub(private val app: Application) {
                 groupAttempts = 0 // Wi-Fi was switched off/on: a fresh start, as the error text suggests
                 p2p?.refresh()
                 if (mutableState.value.mode == Mode.RECEIVE) {
-                    ensureReceiverGroup()
+                    // Let the initial requestGroupInfo() callback arrive before creating a group.
+                    scheduleEnsureGroup(900L)
                 }
             }
             publish()
@@ -333,6 +376,30 @@ class TransferHub(private val app: Application) {
             handleConnectionInfo(info)
         }
 
+        override fun onGroupInfo(exists: Boolean) {
+            if (mutableState.value.mode != Mode.RECEIVE) return
+            val now = SystemClock.elapsedRealtime()
+            Log.i(P2P_TAG, "receiver group info exists=$exists creating=$creatingGroup")
+            if (exists) {
+                receiverGroupPresent = true
+                lastGroupCreateAcceptedAtMs = now
+                if (creatingGroup) {
+                    creatingGroup = false
+                    main.removeCallbacks(groupWatchdog)
+                }
+            } else {
+                val sinceAccepted = now - lastGroupCreateAcceptedAtMs
+                val mayBeStale = lastGroupCreateAcceptedAtMs != 0L && sinceAccepted <= GROUP_CREATE_NULL_GRACE_MS
+                if (!mayBeStale) {
+                    receiverGroupPresent = false
+                    if (!creatingGroup) scheduleEnsureGroup(1_500L)
+                } else {
+                    Log.w(P2P_TAG, "ignoring stale null group-info callback (${sinceAccepted}ms after create)")
+                }
+            }
+            publish()
+        }
+
         override fun onChannelLost() {
             publish()
         }
@@ -347,14 +414,22 @@ class TransferHub(private val app: Application) {
             groupFormed = false
             stopLink()
             abortUnfinished(null)
-            if (mode == Mode.RECEIVE && !creatingGroup) {
-                // A receiver without a group is useless: build it again (debounced).
-                scheduleEnsureGroup(1_000)
+            if (mode == Mode.RECEIVE && !creatingGroup && !receiverGroupPresent) {
+                // Do not rebuild a receiver group based only on a possibly stale null connection-info callback.
+                val sinceAccepted = SystemClock.elapsedRealtime() - lastGroupCreateAcceptedAtMs
+                if (lastGroupCreateAcceptedAtMs == 0L || sinceAccepted > GROUP_CREATE_NULL_GRACE_MS) {
+                    scheduleEnsureGroup(1_500L)
+                }
             }
             publish()
             return
         }
         groupFormed = true
+        if (mode == Mode.RECEIVE) {
+            receiverGroupPresent = true
+            creatingGroup = false
+            main.removeCallbacks(groupWatchdog)
+        }
         groupAttempts = 0
         connectingTo = null
         cancelConnectTimeout()
@@ -365,7 +440,7 @@ class TransferHub(private val app: Application) {
 
     private fun ensureReceiverGroup() {
         val controller = p2p ?: return
-        if (mutableState.value.mode != Mode.RECEIVE || p2pEnabled != true || groupFormed || creatingGroup) {
+        if (mutableState.value.mode != Mode.RECEIVE || p2pEnabled != true || groupFormed || receiverGroupPresent || creatingGroup) {
             return
         }
         if (groupAttempts >= MAX_GROUP_ATTEMPTS) {
@@ -380,16 +455,23 @@ class TransferHub(private val app: Application) {
         main.removeCallbacks(groupWatchdog)
         main.postDelayed(groupWatchdog, GROUP_TIMEOUT_MS)
         controller.createGroup(prefer5Ghz = mutableState.value.fastMode) { result ->
-            main.removeCallbacks(groupWatchdog)
             if (!creatingGroup) {
                 return@createGroup // the watchdog already gave up on this attempt
             }
-            creatingGroup = false
             if (result.ok) {
+                lastGroupCreateAcceptedAtMs = SystemClock.elapsedRealtime()
                 mutableState.update { it.copy(fiveGhz = result.fiveGhz) }
+                Log.i(P2P_TAG, "receiver createGroup accepted fiveGhz=${result.fiveGhz}; waiting for group-info callback")
+                // Keep creatingGroup=true until requestGroupInfo confirms that the group exists.
                 controller.refresh()
-                main.postDelayed({ controller.refresh() }, 1_500)
+                main.postDelayed({ if (creatingGroup) controller.refresh() }, 700L)
+                main.postDelayed({ if (creatingGroup) controller.refresh() }, 1_800L)
+                main.postDelayed({ if (creatingGroup) controller.refresh() }, 4_000L)
             } else {
+                main.removeCallbacks(groupWatchdog)
+                creatingGroup = false
+                receiverGroupPresent = false
+                Log.e(P2P_TAG, "receiver createGroup failed reason=${result.reason}")
                 scheduleEnsureGroup(1_500)
             }
             publish()
@@ -636,6 +718,8 @@ class TransferHub(private val app: Application) {
         p2pEnabled = null
         groupFormed = false
         creatingGroup = false
+        receiverGroupPresent = false
+        lastGroupCreateAcceptedAtMs = 0L
         connectingTo = null
         sessionPeer = null
         errorText = null
@@ -662,7 +746,7 @@ class TransferHub(private val app: Application) {
                 p2pEnabled == false -> Phase.P2P_OFF
                 errorText != null -> Phase.ERROR
                 p2pEnabled == null -> Phase.PREPARING
-                s.mode == Mode.RECEIVE -> if (groupFormed) Phase.READY else Phase.PREPARING
+                s.mode == Mode.RECEIVE -> if (groupFormed || receiverGroupPresent) Phase.READY else Phase.PREPARING
                 else -> if (groupFormed || connectingTo != null) Phase.CONNECTING else Phase.READY
             }
             s.copy(phase = phase, detail = errorText, peerName = sessionPeer, connectingTo = connectingTo)
@@ -682,5 +766,7 @@ class TransferHub(private val app: Application) {
         const val MAX_GROUP_ATTEMPTS = 4
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val GROUP_TIMEOUT_MS = 25_000L
+        const val GROUP_CREATE_NULL_GRACE_MS = 6_000L
+        const val P2P_TAG = "WifiP2P"
     }
 }

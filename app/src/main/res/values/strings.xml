@@ -67,7 +67,7 @@
     <string name="receive_detail_wifi_off">Turn on Wi-Fi to receive files.</string>
     <string name="receive_status_ready">Ready to receive</string>
     <string name="receive_detail_ready">On the sending phone open “Send files”, search for “%1$s” and tap it. Accept the invitation here.</string>
-    <string name="receive_detail_preparing">Creating a fast Wi-Fi Direct connection point…</string>
+    <string name="receive_detail_preparing">Preparing a compatible Wi-Fi Direct connection point…</string>
     <string name="receive_detail_connected">Waiting for files. They are saved in Downloads/WifiP2P.</string>
     <string name="receive_empty">Received files appear here.\nThey are saved in Downloads/WifiP2P.</string>
     <string name="mode_fast">Fast mode: 5 GHz band</string>
