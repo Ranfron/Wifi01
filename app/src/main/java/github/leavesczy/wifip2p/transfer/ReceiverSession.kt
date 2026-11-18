@@ -12,6 +12,10 @@ import java.util.zip.CRC32
  * Receiver half of one TCP connection. [serve] loops over incoming batches until the connection
  * ends. Files are streamed straight into the [SinkFactory] (no temp copies), size- and
  * CRC-verified, and a partially received file is always deleted.
+ *
+ * A file that cannot be stored (no permission, disk full, a checksum error, ...) is rejected on its
+ * own: its bytes are still read and dropped, so the stream stays in sync and the rest of the batch
+ * arrives normally. Only a broken connection ends the session.
  */
 class ReceiverSession(
     private val socket: Socket,
@@ -52,11 +56,13 @@ class ReceiverSession(
                     batchActive = false
                     events.onBatchFinished()
                 }
+
                 else -> throw ProtocolException("Unexpected message ${frame.type}")
             }
         }
     }
 
+    @Throws(IOException::class)
     private fun onBatch(info: BatchInfo) {
         val free = try {
             sinks.availableBytes()
@@ -86,27 +92,6 @@ class ReceiverSession(
         events.onBatchStarted(info.fileCount, info.totalBytes)
     }
 
-    /**
-     * Tells the sender WHY the transfer stops, then closes the sending direction and swallows what
-     * is still in flight for a moment. Closing a socket with unread data would send a TCP reset that
-     * can destroy the explanation before the sender reads it ("Broken pipe" is not helpful).
-     */
-    private fun hangUp(index: Int, reason: String) {
-        try {
-            FrameIO.write(output, FileAck(index, false, reason).toFrame())
-            socket.shutdownOutput()
-            socket.soTimeout = 500
-            val trash = ByteArray(64 * 1024)
-            val deadline = System.nanoTime() + 1_500_000_000L
-            while (System.nanoTime() < deadline) {
-                if (input.read(trash) < 0) {
-                    break
-                }
-            }
-        } catch (_: Exception) {
-        }
-    }
-
     private fun emit(index: Int, name: String, fileBytes: Long, fileSize: Long, force: Boolean) {
         val now = System.nanoTime()
         if (!force && now - lastEmitNanos < tuning.progressIntervalMs * 1_000_000) {
@@ -134,14 +119,47 @@ class ReceiverSession(
         try {
             handle = sinks.create(name, header.size, header.mimeType, header.lastModified)
         } catch (e: Exception) {
-            // The sender is already streaming this file's bytes: tell it why, then drop the connection.
-            val reason = "Cannot create file: ${describeError(e)}"
-            events.onFileFinished(header.index, name, FileState.FAILED, reason, null)
-            hangUp(header.index, reason)
-            throw IOException(reason, e)
+            rejectFile(header, name, "Cannot create file: ${describeError(e)}", cancel)
+            return
         }
+        receiveInto(handle, header, name, cancel)
+    }
 
-        var committed = false
+    /** The file cannot be stored: read its bytes and drop them, then tell the sender why. */
+    @Throws(IOException::class)
+    private fun rejectFile(header: FileHeader, name: String, reason: String, cancel: CancelToken) {
+        discardFile(header, cancel)
+        events.onFileFinished(header.index, name, FileState.FAILED, reason, null)
+        FrameIO.write(output, FileAck(header.index, false, reason).toFrame())
+    }
+
+    /** Reads and drops the bytes of a file that is not stored, plus its FILE_END frame. */
+    @Throws(IOException::class)
+    private fun discardFile(header: FileHeader, cancel: CancelToken) {
+        socket.soTimeout = tuning.stallTimeoutMs
+        try {
+            val buffer = ByteArray(minOf(64L * 1024, maxOf(header.size, 1L)).toInt())
+            var remaining = header.size
+            while (remaining > 0) {
+                cancel.throwIfCancelled()
+                val want = minOf(buffer.size.toLong(), remaining).toInt()
+                val n = FrameIO.readUpTo(input, buffer, want)
+                if (n < want) {
+                    throw EOFException("Connection lost while receiving \"${header.name}\"")
+                }
+                remaining -= n
+                batchBytes += n
+            }
+            FileEnd.parse(FrameIO.read(input))
+        } finally {
+            socket.soTimeout = 0
+        }
+    }
+
+    @Throws(IOException::class)
+    private fun receiveInto(handle: SinkHandle, header: FileHeader, name: String, cancel: CancelToken) {
+        var handleOpen = true
+        var writeError: IOException? = null
         var reported = false
         try {
             socket.soTimeout = tuning.stallTimeoutMs
@@ -169,34 +187,56 @@ class ReceiverSession(
                 },
                 consumer = { chunk ->
                     crc.update(chunk.data, 0, chunk.length)
-                    handle.stream.write(chunk.data, 0, chunk.length)
+                    if (writeError == null) {
+                        try {
+                            handle.stream.write(chunk.data, 0, chunk.length)
+                        } catch (e: IOException) {
+                            // e.g. the storage is full: stop writing, but keep reading so the stream stays in sync
+                            writeError = e
+                            abortHandle(handle)
+                            handleOpen = false
+                        }
+                    }
                     received += chunk.length
                     batchBytes += chunk.length
                     emit(header.index, name, received, header.size, force = false)
                 }
             )
-            handle.stream.flush()
+            if (writeError == null) {
+                try {
+                    handle.stream.flush()
+                } catch (e: IOException) {
+                    writeError = e
+                    abortHandle(handle)
+                    handleOpen = false
+                }
+            }
             emit(header.index, name, received, header.size, force = true)
             val end = FileEnd.parse(FrameIO.read(input))
             socket.soTimeout = 0
 
-            // All bytes of this file are consumed: from here on the stream stays consistent even if
-            // this single file has to be rejected, so these failures are NOT fatal for the session.
-            var failure: String? = null
-            if (end.crc32 != crc.value) {
-                failure = "Checksum mismatch - the file was damaged in transit"
+            // All bytes of this file are consumed, so the stream is in sync: nothing below ends the connection.
+            val storageProblem = writeError
+            var failure: String? = when {
+                storageProblem != null -> "Cannot save file: ${describeError(storageProblem)}"
+                end.incomplete -> "The file was incomplete on the sending phone (it changed or could not be read)"
+                end.crc32 != crc.value -> "Checksum mismatch - the file was damaged in transit"
+                else -> null
             }
             var location: String? = null
             if (failure == null) {
                 try {
                     location = handle.commit()
-                    committed = true
+                    handleOpen = false
                 } catch (e: Exception) {
                     failure = "Cannot save file: ${describeError(e)}"
                 }
             }
             if (failure != null) {
-                handle.abort()
+                if (handleOpen) {
+                    abortHandle(handle)
+                    handleOpen = false
+                }
                 reported = true
                 events.onFileFinished(header.index, name, FileState.FAILED, failure, null)
                 FrameIO.write(output, FileAck(header.index, false, failure).toFrame())
@@ -206,16 +246,18 @@ class ReceiverSession(
             events.onFileFinished(header.index, name, FileState.DONE, null, location)
             FrameIO.write(output, FileAck(header.index, true, "").toFrame())
         } catch (t: Throwable) {
-            if (!committed) {
-                handle.abort() // never delete a file that was already published
+            // the connection is gone (or was cancelled): never keep a partial file
+            if (handleOpen) {
+                abortHandle(handle)
+                handleOpen = false
             }
             if (!reported) {
-                val cancelledHere = t is CancelledException || cancel.cancelled
-                val state = if (cancelledHere) FileState.CANCELLED else FileState.FAILED
-                events.onFileFinished(header.index, name, state, describeError(t), null)
-                if (!cancelledHere) {
-                    hangUp(header.index, describeError(t))
-                }
+                val cancelled = t is CancelledException || cancel.cancelled
+                events.onFileFinished(
+                    header.index, name,
+                    if (cancelled) FileState.CANCELLED else FileState.FAILED,
+                    describeError(t), null
+                )
             }
             if (t is IOException) {
                 throw t
@@ -226,6 +268,13 @@ class ReceiverSession(
                 socket.soTimeout = 0
             } catch (_: Exception) {
             }
+        }
+    }
+
+    private fun abortHandle(handle: SinkHandle) {
+        try {
+            handle.abort()
+        } catch (_: Exception) {
         }
     }
 }

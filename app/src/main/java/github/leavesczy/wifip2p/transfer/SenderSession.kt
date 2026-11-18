@@ -7,6 +7,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.Arrays
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -26,8 +27,13 @@ internal fun describeError(t: Throwable): String {
 }
 
 /**
- * Sender half of one TCP connection. Long-lived: after [start] any number of batches can be
- * sent with [sendBatch]. A background reader notices immediately when the other side goes away.
+ * Sender half of one TCP connection. Long-lived: after [start] any number of batches can be sent
+ * with [sendBatch]. A background reader notices immediately when the other side goes away.
+ *
+ * Two kinds of failure are told apart:
+ *  - a problem with ONE file (unreadable source, a source shorter than announced, refused by the
+ *    receiver) fails only that file - the connection stays up and the next file goes out on it;
+ *  - a broken connection (socket error, protocol violation, stalled receiver) ends the session.
  */
 class SenderSession(
     private val socket: Socket,
@@ -153,32 +159,6 @@ class SenderSession(
         }
     }
 
-    /**
-     * When the receiver gives up it sends a FILE_ACK(false, reason) right before hanging up.
-     * It is more useful to show that reason than a generic "Broken pipe".
-     */
-    private fun receiverExplanation(): String? {
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(400)
-        while (System.nanoTime() < deadline) {
-            val item = inbox.poll(50, TimeUnit.MILLISECONDS) ?: continue
-            if (item === CLOSED) {
-                inbox.offer(CLOSED)
-                return null
-            }
-            val frame = item as Frame
-            if (frame.type == Protocol.TYPE_FILE_ACK) {
-                try {
-                    val ack = FileAck.parse(frame)
-                    if (!ack.ok && ack.message.isNotEmpty()) {
-                        return ack.message
-                    }
-                } catch (_: IOException) {
-                }
-            }
-        }
-        return null
-    }
-
     private inner class Tracker(val batchTotal: Long) {
         var batchBytes = 0L
         private val meter = SpeedMeter()
@@ -260,7 +240,36 @@ class SenderSession(
         }
     }
 
-    /** Returns DONE or FAILED for problems that leave the connection usable. Fatal errors are thrown. */
+    /**
+     * When the receiver gives up it sends a FILE_ACK(false, reason) right before hanging up.
+     * It is more useful to show that reason than a generic "Broken pipe".
+     */
+    private fun receiverExplanation(): String? {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(400)
+        while (System.nanoTime() < deadline) {
+            val item = inbox.poll(50, TimeUnit.MILLISECONDS) ?: continue
+            if (item === CLOSED) {
+                inbox.offer(CLOSED)
+                return null
+            }
+            val frame = item as Frame
+            if (frame.type == Protocol.TYPE_FILE_ACK) {
+                try {
+                    val ack = FileAck.parse(frame)
+                    if (!ack.ok && ack.message.isNotEmpty()) {
+                        return ack.message
+                    }
+                } catch (_: IOException) {
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Sends one file. Returns DONE or FAILED for problems that leave the connection usable; only
+     * socket and protocol errors are thrown, because they end the session.
+     */
     @Throws(Exception::class)
     private fun sendOne(index: Int, source: SendSource, cancel: CancelToken, tracker: Tracker): FileState {
         events.onFileStarted(index, source.name, source.size)
@@ -268,10 +277,8 @@ class SenderSession(
         try {
             stream = source.open()
         } catch (e: Exception) {
-            events.onFileFinished(
-                index, source.name, FileState.FAILED,
-                "Cannot read file: ${describeError(e)}", null
-            )
+            // nothing has been announced to the receiver yet, so the stream is still in sync
+            events.onFileFinished(index, source.name, FileState.FAILED, "Cannot read file: ${describeError(e)}", null)
             return FileState.FAILED
         }
         try {
@@ -282,6 +289,8 @@ class SenderSession(
             val crc = CRC32()
             var produced = 0L
             var sent = 0L
+            var sourceDone = false
+            var incomplete = false
             transferring = true
             touch()
             ChunkPipe.run(
@@ -295,13 +304,27 @@ class SenderSession(
                         false
                     } else {
                         val want = minOf(chunk.data.size.toLong(), remaining).toInt()
-                        val n = FrameIO.readUpTo(stream, chunk.data, want)
-                        if (n < want) {
-                            throw EOFException("\"${source.name}\" ended early (file changed while sending?)")
+                        var got = 0
+                        if (!sourceDone) {
+                            got = try {
+                                FrameIO.readUpTo(stream, chunk.data, want)
+                            } catch (_: Exception) {
+                                0 // the provider failed mid-way: treated like a short file below
+                            }
+                            if (got < want) {
+                                sourceDone = true
+                                incomplete = true
+                            }
                         }
-                        crc.update(chunk.data, 0, n)
-                        chunk.length = n
-                        produced += n
+                        // The receiver expects exactly `size` bytes. What the source could not deliver is
+                        // padded with zeros: the file is marked incomplete and dropped on the other side,
+                        // but the connection carries on with the next file instead of being torn down.
+                        if (got < want) {
+                            Arrays.fill(chunk.data, got, want, 0.toByte())
+                        }
+                        crc.update(chunk.data, 0, want)
+                        chunk.length = want
+                        produced += want
                         true
                     }
                 },
@@ -315,21 +338,22 @@ class SenderSession(
             )
             transferring = false
             tracker.emit(index, source.name, sent, source.size, force = true)
-            FrameIO.write(output, FileEnd(crc.value).toFrame())
+            FrameIO.write(output, FileEnd(crc.value, incomplete).toFrame())
             val ack = FileAck.parse(awaitFrame(Protocol.TYPE_FILE_ACK, tuning.ackTimeoutMs, cancel))
             if (ack.index != index) {
                 throw ProtocolException("Out-of-order acknowledgement")
             }
-            return if (ack.ok) {
+            if (ack.ok && !incomplete) {
                 events.onFileFinished(index, source.name, FileState.DONE, null, null)
-                FileState.DONE
-            } else {
-                events.onFileFinished(
-                    index, source.name, FileState.FAILED,
-                    ack.message.ifEmpty { "The receiver could not store the file" }, null
-                )
-                FileState.FAILED
+                return FileState.DONE
             }
+            val message = if (incomplete) {
+                "Could not read the whole file on this phone"
+            } else {
+                ack.message.ifEmpty { "The receiver could not store the file" }
+            }
+            events.onFileFinished(index, source.name, FileState.FAILED, message, null)
+            return FileState.FAILED
         } finally {
             transferring = false
             try {

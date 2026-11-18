@@ -304,4 +304,12 @@ class ProtocolAndSupportTest {
         }
         assertFalse("a failed run must not recycle its buffers", before === pool.take())
     }
+
+    @Test
+    fun fileEndCarriesTheIncompleteFlag() {
+        val end = FileEnd.parse(roundTrip(FileEnd(0xCAFEL, incomplete = true).toFrame()))
+        assertEquals(0xCAFEL, end.crc32)
+        assertTrue(end.incomplete)
+        assertFalse(FileEnd.parse(roundTrip(FileEnd(7L).toFrame())).incomplete)
+    }
 }

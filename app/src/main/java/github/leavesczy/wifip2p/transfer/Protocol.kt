@@ -223,16 +223,22 @@ data class FileHeader(
     }
 }
 
-/** Sent by the sender after the raw bytes of a file. [crc32] is the CRC-32 of those bytes. */
-data class FileEnd(val crc32: Long) {
+/**
+ * Sent by the sender after the raw bytes of a file. [crc32] is the CRC-32 of exactly those bytes.
+ * [incomplete] = true means the sending phone could not read the whole file: the missing bytes were
+ * padded so the stream stays in sync, and the receiver must drop the file (the connection goes on).
+ */
+data class FileEnd(val crc32: Long, val incomplete: Boolean = false) {
 
     fun toFrame(): Frame = Frame(Protocol.TYPE_FILE_END, encode {
         it.writeInt(crc32.toInt())
+        it.writeBoolean(incomplete)
     })
 
     companion object {
         fun parse(frame: Frame): FileEnd = decode(frame, Protocol.TYPE_FILE_END) {
-            FileEnd(it.readInt().toLong() and 0xFFFFFFFFL)
+            val crc = it.readInt().toLong() and 0xFFFFFFFFL
+            FileEnd(crc, it.readBoolean())
         }
     }
 }

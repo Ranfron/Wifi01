@@ -69,6 +69,9 @@ interface SessionEvents {
 enum class ChannelDirection { SEND, RECEIVE }
 
 interface LinkListener {
+    /** A bug in the app was caught instead of breaking the connection. For logging only. */
+    fun onInternalError(error: Throwable) {}
+
     /** Host side: the server socket is open. */
     fun onListening() {}
 
@@ -80,4 +83,35 @@ interface LinkListener {
 
     /** Unrecoverable problem, for instance the port cannot be opened. */
     fun onFailed(detail: String)
+}
+
+/**
+ * Wraps the callbacks of a session: an exception thrown by the app (a UI bug, for instance) is
+ * reported instead of tearing down the connection. The transfer protocol never depends on the UI.
+ */
+class GuardedEvents(
+    private val inner: SessionEvents,
+    private val report: (Throwable) -> Unit
+) : SessionEvents {
+
+    private inline fun guard(block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            report(t)
+        }
+    }
+
+    override fun onBatchStarted(fileCount: Int, totalBytes: Long) =
+        guard { inner.onBatchStarted(fileCount, totalBytes) }
+
+    override fun onFileStarted(index: Int, name: String, size: Long) =
+        guard { inner.onFileStarted(index, name, size) }
+
+    override fun onProgress(progress: FileProgress) = guard { inner.onProgress(progress) }
+
+    override fun onFileFinished(index: Int, name: String, state: FileState, message: String?, location: String?) =
+        guard { inner.onFileFinished(index, name, state, message, location) }
+
+    override fun onBatchFinished() = guard { inner.onBatchFinished() }
 }

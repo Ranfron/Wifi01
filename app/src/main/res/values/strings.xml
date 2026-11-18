@@ -92,7 +92,7 @@
     <string name="notification_title_receive">Receiving files</string>
     <string name="notification_connected">Connected to %1$s</string>
     <string name="notification_preparing">Getting ready…</string>
-    <string name="notification_progress">File %1$d of %2$d • %3$s • %4$s left</string>
+    <string name="notification_progress">%1$s • %2$s left</string>
     <string name="notification_stop">Stop</string>
     <string name="camera_failed">The camera could not be started.</string>
     <string name="camera_permission_denied">The camera permission is needed to scan the QR code.</string>

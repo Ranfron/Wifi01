@@ -92,7 +92,7 @@
     <string name="notification_title_receive">फ़ाइलें मिल रही हैं</string>
     <string name="notification_connected">%1$s से जुड़ा है</string>
     <string name="notification_preparing">तैयार हो रहा है…</string>
-    <string name="notification_progress">फ़ाइल %1$d / %2$d • %3$s • %4$s बाकी</string>
+    <string name="notification_progress">%1$s • %2$s बाकी</string>
     <string name="notification_stop">रोकें</string>
     <string name="camera_failed">कैमरा शुरू नहीं हो सका।</string>
     <string name="camera_permission_denied">QR कोड स्कैन करने के लिए कैमरा की अनुमति चाहिए।</string>

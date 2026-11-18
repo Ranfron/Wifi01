@@ -721,6 +721,10 @@ class TransferHub(private val app: Application) {
             publish()
         }
 
+        override fun onInternalError(error: Throwable) {
+            android.util.Log.e("WifiP2P", "Recovered from an internal error, the connection was kept", error)
+        }
+
         override fun onHostUnreachable() {
             postMessage(app.getString(R.string.msg_unreachable))
         }

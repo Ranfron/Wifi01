@@ -49,21 +49,25 @@ class TransferService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureChannel(this)
-        startInForeground(buildNotification(NotificationModel.from(this, transferHub().state.value)))
+        startInForeground(buildNotification(modelFor(transferHub().state.value)))
         acquireLocks()
         val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = serviceScope
         serviceScope.launch {
             transferHub().state
-                .map { NotificationModel.from(this@TransferService, it) }
+                .map { modelFor(it) }
                 .distinctUntilChanged()
                 .conflate()
                 .collect { model ->
                     if (model.role == Role.NONE) {
                         stopSelf()
                     } else {
-                        getSystemService(NotificationManager::class.java)
-                            ?.notify(NOTIFICATION_ID, buildNotification(model))
+                        try {
+                            getSystemService(NotificationManager::class.java)
+                                ?.notify(NOTIFICATION_ID, buildNotification(model))
+                        } catch (_: Exception) {
+                            // a notification problem must never take the transfer down
+                        }
                     }
                     delay(400) // at most ~2 notification updates per second
                 }
@@ -77,7 +81,7 @@ class TransferService : Service() {
             return START_NOT_STICKY
         }
         // Every startForegroundService() call must be answered with startForeground().
-        startInForeground(buildNotification(NotificationModel.from(this, transferHub().state.value)))
+        startInForeground(buildNotification(modelFor(transferHub().state.value)))
         return START_NOT_STICKY
     }
 
@@ -111,6 +115,15 @@ class TransferService : Service() {
         } catch (_: Exception) {
             // e.g. started from the background on Android 12+: the app keeps working while it is visible
             stopSelf()
+        }
+    }
+
+    /** Never throws: a broken notification text must not be able to stop the transfer. */
+    private fun modelFor(state: HubState): NotificationModel {
+        return try {
+            NotificationModel.from(this, state)
+        } catch (_: Exception) {
+            NotificationModel.fallback(this, state)
         }
     }
 
@@ -217,6 +230,15 @@ private data class NotificationModel(
     val progressPermille: Int
 ) {
     companion object {
+        /** Plain text, used when the detailed one cannot be built. */
+        fun fallback(context: Context, state: HubState): NotificationModel =
+            NotificationModel(
+                state.role,
+                context.getString(R.string.notification_title_idle),
+                context.getString(R.string.notification_preparing),
+                -1
+            )
+
         fun from(context: Context, state: HubState): NotificationModel {
             val out = state.activeOut
             val incoming = state.activeIn

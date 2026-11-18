@@ -94,7 +94,7 @@ fun sha256(file: File): String {
 }
 
 /** Stores received files in a directory. Mirrors the contract of the real Android sink. */
-class DirSinks(private val dir: File) : SinkFactory {
+open class DirSinks(private val dir: File) : SinkFactory {
     @Volatile
     var available: Long = Long.MAX_VALUE
 
@@ -251,14 +251,13 @@ class RecordingLink : LinkListener {
 }
 
 /** One phone of a test: its own storage folder, its own events, its own link. */
-class Phone(val name: String, val dir: File, tuning: Tuning) {
+class Phone(val name: String, val dir: File, tuning: Tuning, val sinks: DirSinks = DirSinks(dir)) {
     /** Files this phone sends. */
     val sent = RecordingEvents()
 
     /** Files this phone receives. */
     val received = RecordingEvents()
     val link = RecordingLink()
-    val sinks = DirSinks(dir)
     val duplex = DuplexLink(name, tuning, sinks, sent, received, link)
 }
 
@@ -321,3 +320,44 @@ class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long)
 }
 
 fun freePort(): Int = ServerSocket(0).use { it.localPort }
+
+/** Declares [size] bytes but can only deliver [actual] - like a provider that reports the wrong size. */
+class ShortSource(override val name: String, override val size: Long, private val actual: Long) : SendSource {
+    override val mimeType: String = "application/octet-stream"
+    override val lastModified: Long = 0
+    override fun open(): InputStream = RandomSource(name, actual).open()
+}
+
+/** Writes fail after [failAfterBytes] for the first [failingFiles] files - like a disk that fills up. */
+class FlakySinks(dir: File, private val failAfterBytes: Long, private val failingFiles: Int) : DirSinks(dir) {
+    private var created = 0
+
+    override fun create(name: String, size: Long, mimeType: String, lastModified: Long): SinkHandle {
+        val inner = super.create(name, size, mimeType, lastModified)
+        val failing = created++ < failingFiles
+        return object : SinkHandle {
+            private var written = 0L
+
+            override val stream: OutputStream = object : OutputStream() {
+                override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+
+                override fun write(b: ByteArray, off: Int, len: Int) {
+                    if (failing && written + len > failAfterBytes) {
+                        throw IOException("No space left on device")
+                    }
+                    written += len
+                    inner.stream.write(b, off, len)
+                }
+
+                override fun flush() = inner.stream.flush()
+
+                override fun close() = inner.stream.close()
+            }
+
+            override fun commit(): String? = inner.commit()
+
+            override fun abort() = inner.abort()
+        }
+    }
+}
+

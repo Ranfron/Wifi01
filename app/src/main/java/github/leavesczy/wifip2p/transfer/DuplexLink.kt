@@ -35,12 +35,14 @@ class DuplexLink(
     private val deviceName: String,
     private val tuning: Tuning,
     private val sinks: SinkFactory,
-    /** Events of the files THIS phone sends. */
-    private val outEvents: SessionEvents,
-    /** Events of the files THIS phone receives. */
-    private val inEvents: SessionEvents,
+    outRaw: SessionEvents,
+    inRaw: SessionEvents,
     private val listener: LinkListener
 ) {
+    // The app's callbacks are guarded: an exception in the UI is reported, never allowed to break the link.
+    private val outEvents = GuardedEvents(outRaw, ::reportInternal)
+    private val inEvents = GuardedEvents(inRaw, ::reportInternal)
+
     private class Slot {
         val socket = AtomicReference<Socket?>(null)
         val generation = AtomicInteger(0)
@@ -136,7 +138,7 @@ class DuplexLink(
             if (stopped.get()) {
                 return
             }
-            listener.onListening()
+            tell { onListening() }
             while (!stopped.get()) {
                 val client = try {
                     server.accept()
@@ -182,7 +184,7 @@ class DuplexLink(
                 runSend(socket, guest.deviceName)
             }
         } catch (_: Throwable) {
-            // not admitted, bad HELLO, timeout: just drop the connection
+            // not admitted, bad HELLO, timeout, or the channel simply ended: drop the connection
         } finally {
             closeQuietly(socket)
         }
@@ -201,11 +203,11 @@ class DuplexLink(
                 val myRole = if (direction == ChannelDirection.SEND) Protocol.ROLE_SENDER else Protocol.ROLE_RECEIVER
                 host = Handshake.asGuest(socket, myRole, deviceName, tuning.handshakeTimeoutMs)
                 attempts = 0
-            } catch (e: IOException) {
+            } catch (_: IOException) {
                 closeQuietly(socket)
                 attempts++
                 if (direction == ChannelDirection.SEND && attempts == tuning.unreachableAfterAttempts) {
-                    listener.onHostUnreachable()
+                    tell { onHostUnreachable() }
                 }
                 // The host's DHCP lease / listener may need a moment: retry quickly at first.
                 sleepQuietly(if (attempts < 10) 600 else 1_500)
@@ -243,16 +245,16 @@ class DuplexLink(
             session.start()
             sender.set(session)
             if (current()) {
-                listener.onChannel(ChannelDirection.SEND, true, peerName, null)
+                tell { onChannel(ChannelDirection.SEND, true, peerName, null) }
             }
             session.awaitClosed()
             session.awaitIdle(2_000) // let a running batch report why its files failed first
             if (current()) {
-                listener.onChannel(ChannelDirection.SEND, false, peerName, "Connection closed")
+                tell { onChannel(ChannelDirection.SEND, false, peerName, "Connection closed") }
             }
         } catch (t: Throwable) {
             if (current()) {
-                listener.onChannel(ChannelDirection.SEND, false, peerName, describe(t))
+                tell { onChannel(ChannelDirection.SEND, false, peerName, describe(t)) }
             }
         } finally {
             admission.closed()
@@ -275,12 +277,12 @@ class DuplexLink(
         admission.opened()
         try {
             if (current()) {
-                listener.onChannel(ChannelDirection.RECEIVE, true, peerName, null)
+                tell { onChannel(ChannelDirection.RECEIVE, true, peerName, null) }
             }
             session.serve(cancel)
         } catch (t: Throwable) {
             if (current()) {
-                listener.onChannel(ChannelDirection.RECEIVE, false, peerName, describe(t))
+                tell { onChannel(ChannelDirection.RECEIVE, false, peerName, describe(t)) }
             }
         } finally {
             admission.closed()
@@ -326,13 +328,30 @@ class DuplexLink(
 
     // ---- helpers ---------------------------------------------------------------------------------
 
+    /** Reports a bug that was caught (the connection itself is kept). */
+    private fun reportInternal(error: Throwable) {
+        try {
+            listener.onInternalError(error)
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Calls the app's link listener; an exception there must not tear down the connection. */
+    private inline fun tell(block: LinkListener.() -> Unit) {
+        try {
+            listener.block()
+        } catch (t: Throwable) {
+            reportInternal(t)
+        }
+    }
+
     private fun startThread(name: String, body: () -> Unit) {
         val thread = Thread({
             try {
                 body()
             } catch (t: Throwable) {
                 if (!stopped.get()) {
-                    listener.onFailed(describeError(t))
+                    tell { onFailed(describeError(t)) }
                 }
             }
         }, name)

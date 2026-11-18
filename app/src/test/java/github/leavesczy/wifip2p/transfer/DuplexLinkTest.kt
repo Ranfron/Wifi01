@@ -28,9 +28,11 @@ class DuplexLinkTest {
         root.deleteRecursively()
     }
 
-    private fun phone(name: String): Phone {
+    private fun phone(name: String, sinks: DirSinks? = null): Phone {
         val dir = File(root, name).also { it.mkdirs() }
-        return Phone(name, dir, tuning).also { p -> cleanup.add { p.duplex.stop() } }
+        val p = if (sinks != null) Phone(name, dir, tuning, sinks) else Phone(name, dir, tuning)
+        cleanup.add { p.duplex.stop() }
+        return p
     }
 
     private fun waitFullyConnected(vararg phones: Phone) {
@@ -41,9 +43,9 @@ class DuplexLinkTest {
     }
 
     /** host = group owner (listens), guest connects. Returns once both channels of both phones are up. */
-    private fun connected(): Pair<Phone, Phone> {
+    private fun connected(hostSinks: DirSinks? = null): Pair<Phone, Phone> {
         val port = freePort()
-        val host = phone("Host-Phone")
+        val host = phone("Host-Phone", hostSinks)
         val guest = phone("Guest-Phone")
         hostPorts[host] = port
         host.duplex.startHost(port)
@@ -261,7 +263,7 @@ class DuplexLinkTest {
     }
 
     @Test
-    fun receiverThatCannotCreateFilesFailsCleanlyAndReconnects() {
+    fun receiverThatCannotCreateAFileKeepsTheConnectionForTheNextOne() {
         val (host, guest) = connected()
         host.sinks.failCreate = true
         guest.duplex.send(listOf(RandomSource("x.bin", 300_000), RandomSource("y.bin", 100)))
@@ -269,10 +271,11 @@ class DuplexLinkTest {
         assertTrue(guest.sent.finished.all { it.state == FileState.FAILED })
         assertTrue(guest.sent.finished.first().message!!.contains("disk full"))
         host.sinks.failCreate = false
-        guest.link.awaitReady(ChannelDirection.SEND, count = 2, timeoutMs = 15_000)
         guest.duplex.send(listOf(RandomSource("z.bin", 1000)))
         guest.sent.awaitFinished(3)
         assertEquals(FileState.DONE, guest.sent.finished.last().state)
+        // the same connection carried all of it: nothing was torn down
+        assertEquals(1, guest.link.readyCount(ChannelDirection.SEND))
     }
 
     @Test
@@ -503,5 +506,68 @@ class DuplexLinkTest {
         val took = System.currentTimeMillis() - started
         assertEquals(FileState.FAILED, guest.sent.finished.single().state)
         assertTrue("watchdog should fire after ~5 s, took $took ms", took in 3_000..15_000)
+    }
+
+    // ---- one bad file never takes the connection down --------------------------------------------
+
+    @Test
+    fun sourceThatIsShorterThanItsSizeFailsOnlyThatFile() {
+        val (host, guest) = connected()
+        guest.duplex.send(listOf(ShortSource("short.bin", 300_000, 120_000), RandomSource("after.bin", 200_000)))
+        guest.sent.awaitFinished(2)
+        host.received.awaitFinished(2)
+        val short = guest.sent.finished.first { it.name == "short.bin" }
+        assertEquals(FileState.FAILED, short.state)
+        assertTrue(short.message!!.contains("Could not read"))
+        assertEquals(FileState.FAILED, host.received.finished.first { it.name == "short.bin" }.state)
+        assertTrue(host.dir.listFiles()!!.none { it.name == "short.bin" })
+        assertEquals(FileState.DONE, guest.sent.finished.first { it.name == "after.bin" }.state)
+        assertEquals(FileState.DONE, host.received.finished.first { it.name == "after.bin" }.state)
+        assertEquals(1, guest.link.readyCount(ChannelDirection.SEND))
+    }
+
+    @Test
+    fun diskFullWhileReceivingKeepsTheConnectionForTheNextFile() {
+        val (host, guest) = connected(FlakySinks(File(root, "Host-Phone"), 100_000, 1))
+        guest.duplex.send(listOf(RandomSource("big.bin", 1_000_000), RandomSource("small.bin", 50_000)))
+        guest.sent.awaitFinished(2)
+        host.received.awaitFinished(2)
+        val big = guest.sent.finished.first { it.name == "big.bin" }
+        assertEquals(FileState.FAILED, big.state)
+        assertTrue(big.message!!.contains("No space left"))
+        assertTrue(host.dir.listFiles()!!.none { it.name == "big.bin" })
+        assertEquals(FileState.DONE, guest.sent.finished.first { it.name == "small.bin" }.state)
+        assertEquals(FileState.DONE, host.received.finished.first { it.name == "small.bin" }.state)
+        assertEquals(1, guest.link.readyCount(ChannelDirection.SEND))
+    }
+
+    @Test
+    fun aBugInTheUserInterfaceDoesNotBreakTheConnection() {
+        val port = freePort()
+        val host = phone("Host-Phone")
+        host.duplex.startHost(port)
+        host.link.await("host listening") { host.link.listening }
+        val sentRecorder = RecordingEvents()
+        val buggyEvents = object : SessionEvents by sentRecorder {
+            override fun onProgress(progress: FileProgress) {
+                throw IllegalStateException("UI bug")
+            }
+        }
+        val guestLink = RecordingLink()
+        val guestDir = File(root, "Guest-Phone").also { it.mkdirs() }
+        val guest = DuplexLink("Guest-Phone", tuning, DirSinks(guestDir), buggyEvents, RecordingEvents(), guestLink)
+        cleanup.add { guest.stop() }
+        guest.startGuest("127.0.0.1", port)
+        guestLink.awaitReady(ChannelDirection.SEND)
+        guestLink.awaitReady(ChannelDirection.RECEIVE)
+        host.link.awaitReady(ChannelDirection.SEND)
+        host.link.awaitReady(ChannelDirection.RECEIVE)
+        val file = RandomSource("with-bug.bin", 3_000_000)
+        assertTrue(guest.send(listOf(file)))
+        sentRecorder.awaitFinished(1)
+        host.received.awaitFinished(1)
+        assertEquals(FileState.DONE, sentRecorder.finished.single().state)
+        assertEquals(file.sha256(), sha256(File(host.dir, "with-bug.bin")))
+        assertEquals(1, guestLink.readyCount(ChannelDirection.SEND))
     }
 }
