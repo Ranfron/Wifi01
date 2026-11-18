@@ -143,4 +143,32 @@
         <item quantity="other">%d फ़ाइलें भेजने के लिए तैयार</item>
     </plurals>
     <string name="share_label">WifiP2P से भेजें</string>
+    <string name="msg_source_gone">फ़ाइल अब उपलब्ध नहीं है: %1$s</string>
+    <string name="msg_resume_waiting">फ़ोन जुड़ते ही यहाँ से जारी होगी।</string>
+    <string name="msg_interrupted_continues">%1$d फ़ाइल(ें) रुकीं - फ़ोन दोबारा जुड़ते ही अपने-आप जारी होंगी।</string>
+    <string name="msg_interrupted_partial">%1$d फ़ाइल(ें) जल्दी रुकीं - मिला हुआ हिस्सा सेव है और यहीं से जारी हो सकता है।</string>
+    <string name="msg_interrupted_will_continue">कनेक्शन टूट गया - फ़ोन दोबारा जुड़ते ही ट्रांसफ़र जारी होगा।</string>
+    <string name="msg_reconnecting">कनेक्शन टूटा। फिर से जुड़ रहे हैं…</string>
+    <string name="msg_rejoin_failed">फिर से नहीं जुड़ पाए। QR कोड दोबारा स्कैन करें।</string>
+    <string name="msg_expired_removed">पाँच दिन से पुरानी %1$d अधूरी फ़ाइल(ें) हटा दी गईं।</string>
+    <string name="state_interrupted">रुका हुआ - अपने-आप जारी होगा</string>
+    <string name="state_done_short">पूरा</string>
+    <string name="history_button">इतिहास और अधूरी फ़ाइलें</string>
+    <string name="history_title">इतिहास</string>
+    <string name="tab_unfinished">अधूरी</string>
+    <string name="tab_history">इतिहास</string>
+    <string name="tab_unfinished_count">अधूरी (%1$d)</string>
+    <string name="action_resume">आगे बढ़ाएँ</string>
+    <string name="action_clean">हटाएँ</string>
+    <string name="action_open">खोलें</string>
+    <string name="clear_history">इतिहास मिटाएँ</string>
+    <string name="unfinished_empty">कोई अधूरी फ़ाइल नहीं।\nजो फ़ाइलें बीच में रुकती हैं, वे यहाँ दिखती हैं और आगे बढ़ाई या हटाई जा सकती हैं।</string>
+    <string name="history_empty">पूरे हुए ट्रांसफ़र यहाँ दिखेंगे।</string>
+    <string name="history_sent">भेजी</string>
+    <string name="history_received">पाई</string>
+    <string name="row_info_outgoing">यहाँ से भेजी जा रही • %1$s • %2$s</string>
+    <string name="row_info_incoming">आधी मिली • %1$s में से %2$s • %3$s</string>
+    <string name="row_expires_days">%1$d दिन में हट जाएगी</string>
+    <string name="row_expires_today">आज हट जाएगी</string>
+    <string name="msg_resume_queued">आगे बढ़ाना तय हुआ - फ़ोन जुड़ते ही शुरू होगा।</string>
 </resources>

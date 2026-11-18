@@ -14,6 +14,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.random.Random
 
 /**
  * Keeps a two-way transfer link alive on top of an existing Wi-Fi network between two phones.
@@ -21,20 +22,19 @@ import java.util.concurrent.atomic.AtomicReference
  * A link consists of TWO independent TCP connections, one per direction:
  *  - the SEND channel carries the files this phone sends,
  *  - the RECEIVE channel carries the files this phone receives.
- * Both phones can therefore send and receive at the same time, and cancelling one direction does
- * not disturb the other.
+ * Both phones can send and receive at the same time, and a problem in one direction does not
+ * disturb the other.
  *
- * Which phone listens ([startHost]) and which one connects ([startGuest]) is only a matter of the
- * network (the Wi-Fi Direct group owner listens); it has nothing to do with who sends. The guest
- * opens both connections and tells the host in the HELLO which direction each one is for.
+ * Which phone listens ([startHost]) and which one connects ([startGuest]) is a question of the
+ * network only. The guest opens both connections and says in its HELLO which direction each one is.
  *
- * The link heals itself: whenever a channel ends (cancel, error, peer left) the guest connects it
- * again and the host accepts again, until [stop] is called.
+ * The link heals itself: when a channel ends (cancel, silence, network change) the guest connects it
+ * again with exponential backoff, and the host accepts again, until [stop] is called.
  */
 class DuplexLink(
     private val deviceName: String,
     private val tuning: Tuning,
-    private val sinks: SinkFactory,
+    private val store: IncomingStore,
     outRaw: SessionEvents,
     inRaw: SessionEvents,
     private val listener: LinkListener
@@ -112,13 +112,13 @@ class DuplexLink(
         return true
     }
 
-    /** Stops everything this phone is sending. The channel reconnects a moment later. */
+    /** Stops everything this phone is sending. The partial data stays on the other side. */
     fun cancelSending() {
         sendSlot.cancel.cancel()
         closeQuietly(sendSlot.socket.get())
     }
 
-    /** Stops everything this phone is receiving. The channel reconnects a moment later. */
+    /** Stops everything this phone is receiving. The partial data is kept for a later resume. */
     fun cancelReceiving() {
         receiveSlot.cancel.cancel()
         closeQuietly(receiveSlot.socket.get())
@@ -209,8 +209,7 @@ class DuplexLink(
                 if (direction == ChannelDirection.SEND && attempts == tuning.unreachableAfterAttempts) {
                     tell { onHostUnreachable() }
                 }
-                // The host's DHCP lease / listener may need a moment: retry quickly at first.
-                sleepQuietly(if (attempts < 10) 600 else 1_500)
+                sleepQuietly(backoffMs(attempts))
                 continue
             }
             try {
@@ -223,9 +222,16 @@ class DuplexLink(
                 closeQuietly(socket)
             }
             if (!stopped.get()) {
-                sleepQuietly(800)
+                sleepQuietly(backoffMs(1))
             }
         }
+    }
+
+    /** Exponential backoff from [Tuning.reconnectMinMs] up to [Tuning.reconnectMaxMs], with jitter. */
+    private fun backoffMs(attempts: Int): Long {
+        val exponent = minOf(attempts - 1, 10)
+        val delay = minOf(tuning.reconnectMinMs * (1L shl exponent), tuning.reconnectMaxMs)
+        return delay + Random.nextLong(0, delay / 4 + 1)
     }
 
     // ---- channels (same code on both sides) -------------------------------------------------------
@@ -248,7 +254,7 @@ class DuplexLink(
                 tell { onChannel(ChannelDirection.SEND, true, peerName, null) }
             }
             session.awaitClosed()
-            session.awaitIdle(2_000) // let a running batch report why its files failed first
+            session.awaitIdle(2_000) // let a running batch report why its files were interrupted first
             if (current()) {
                 tell { onChannel(ChannelDirection.SEND, false, peerName, "Connection closed") }
             }
@@ -273,7 +279,7 @@ class DuplexLink(
         closeQuietly(slot.socket.getAndSet(socket))
         val cancel = CancelToken()
         slot.cancel = cancel
-        val session = ReceiverSession(socket, sinks, tuning, inEvents)
+        val session = ReceiverSession(socket, store, tuning, inEvents)
         admission.opened()
         try {
             if (current()) {

@@ -27,7 +27,14 @@ data class Tuning(
     /** A second phone may only take over after the first one has been gone for this long. */
     val admissionIdleMs: Long = 10_000,
     /** After this many failed connection attempts the guest tells the user that the host cannot be reached. */
-    val unreachableAfterAttempts: Int = 12
+    val unreachableAfterAttempts: Int = 12,
+    /** How often an idle side sends a heartbeat frame. */
+    val heartbeatIntervalMs: Long = 2_000,
+    /** A link without any frame from the other side for this long is considered dead. */
+    val deadAfterMs: Long = 10_000,
+    /** Reconnect delay: starts at [reconnectMinMs], doubles up to [reconnectMaxMs]. */
+    val reconnectMinMs: Long = 400,
+    val reconnectMaxMs: Long = 4_000
 )
 
 class CancelledException(message: String = "Cancelled") : IOException(message)

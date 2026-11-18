@@ -16,15 +16,19 @@ import github.leavesczy.wifip2p.p2p.P2pController
 import github.leavesczy.wifip2p.p2p.P2pPeer
 import github.leavesczy.wifip2p.p2p.WifiJoiner
 import github.leavesczy.wifip2p.service.TransferService
-import github.leavesczy.wifip2p.storage.DownloadsSinkFactory
 import github.leavesczy.wifip2p.storage.UriSendSource
 import github.leavesczy.wifip2p.transfer.ChannelDirection
 import github.leavesczy.wifip2p.transfer.ConnectCode
 import github.leavesczy.wifip2p.transfer.DuplexLink
+import github.leavesczy.wifip2p.transfer.FileIncomingStore
 import github.leavesczy.wifip2p.transfer.FileProgress
 import github.leavesczy.wifip2p.transfer.FileState
 import github.leavesczy.wifip2p.transfer.Formatters
+import github.leavesczy.wifip2p.transfer.HistoryEntry
+import github.leavesczy.wifip2p.transfer.HistoryLog
 import github.leavesczy.wifip2p.transfer.LinkListener
+import github.leavesczy.wifip2p.transfer.OutgoingEntry
+import github.leavesczy.wifip2p.transfer.OutgoingLedger
 import github.leavesczy.wifip2p.transfer.Protocol
 import github.leavesczy.wifip2p.transfer.SendSource
 import github.leavesczy.wifip2p.transfer.SessionEvents
@@ -39,19 +43,45 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * One instance per process (see [github.leavesczy.wifip2p.App]). It owns the Wi-Fi Direct
- * controller, the QR join and the two-way transfer link, so a screen rotation or leaving the app
- * never interrupts a transfer. Screens only observe [state] and call the public functions on the
- * main thread.
+ * One instance per process (see [github.leavesczy.wifip2p.App]). It owns the Wi-Fi Direct controller,
+ * the QR join, the two-way transfer link, and the persistent records (outgoing ledger, history,
+ * incoming partial files). A screen rotation or leaving the app never interrupts a transfer.
  *
  * Roles:
  *  - HOST creates the Wi-Fi Direct group (on 5 GHz when possible) and shows its QR code.
  *  - JOIN scans that QR code (or searches for the host) and connects.
  * Afterwards both phones are equal: each one sends and receives.
+ *
+ * Connection problems never lose data: an unfinished file is INTERRUPTED, recorded in the ledger, and
+ * continues by itself when the phones meet again. A user can also resume or clean it manually.
  */
-class TransferHub(private val app: Application) {
+class TransferHub(
+    private val app: Application,
+    private val ledger: OutgoingLedger,
+    private val history: HistoryLog,
+    private val incoming: FileIncomingStore
+) {
 
     private enum class LinkSource { NONE, P2P, QR }
+
+    /** Everything an outgoing file needs to be sent again. */
+    private class OutgoingRef(val uri: Uri, val source: SendSource)
+
+    /** One row of the "unfinished" list: a file on the sending phone (resumable) or a partial file received here. */
+    data class UnfinishedRow(
+        val key: String,
+        val name: String,
+        val size: Long,
+        val stored: Long,
+        val outgoing: Boolean,
+        val state: FileState,
+        val reason: String,
+        val updatedAt: Long
+    )
+
+    data class Records(val unfinished: List<UnfinishedRow>, val history: List<HistoryEntry>)
+
+    data class PurgeResult(val outgoing: Int, val incoming: Int)
 
     private val mutableState = MutableStateFlow(HubState())
     val state: StateFlow<HubState> = mutableState.asStateFlow()
@@ -64,7 +94,6 @@ class TransferHub(private val app: Application) {
     private val messageIds = AtomicLong(1)
     private val lock = Any()
 
-    private val sinks by lazy { DownloadsSinkFactory(app) }
     private val tuning = Tuning()
 
     // ---- session facts. Derived into the UI state by publish() -----------------------------------
@@ -116,6 +145,13 @@ class TransferHub(private val app: Application) {
     private var lastInfo: WifiP2pInfo? = null
     private var lastGroup: WifiP2pGroup? = null
     private var qrTarget: ConnectCode? = null
+
+    // Automatic reconnect: the last QR code, or the last device found by search.
+    private var lastQrText: String? = null
+    private var rejoinAttempts = 0
+    private var lastPeerAddress: String? = null
+    private var autoReconnectAttempts = 0
+
     private val ensureGroupRunnable = Runnable { ensureHostGroup() }
     private val groupWatchdog = Runnable {
         // createGroup() never answered (framework hiccup): give up this attempt and try again
@@ -133,9 +169,13 @@ class TransferHub(private val app: Application) {
     private var batchCountOut = 0
     private val receivedIds = HashMap<Int, Long>()
     private var batchCountIn = 0
+    private val refsById = HashMap<Long, OutgoingRef>()
+    private val itemIdByKey = HashMap<String, Long>()
+    private val inFlightKeys = HashSet<String>()
+    private val waitingResume = HashSet<String>()
 
     // =============================================================================================
-    // Public API (main thread)
+    // Public API (main thread unless noted)
     // =============================================================================================
 
     fun begin(newRole: Role) {
@@ -218,6 +258,7 @@ class TransferHub(private val app: Application) {
         if (mutableState.value.role != Role.JOIN) {
             return
         }
+        lastPeerAddress = peer.address
         joinMethod = JoinMethod.SEARCH
         connectingTo = peer.name
         errorText = null
@@ -255,6 +296,7 @@ class TransferHub(private val app: Application) {
             postMessage(app.getString(R.string.banner_wifi_off))
             return
         }
+        lastQrText = text
         cancelConnectTimeout()
         stopLink()
         joiner?.leave()
@@ -290,8 +332,26 @@ class TransferHub(private val app: Application) {
             }
             resetJoinFacts()
             postMessage(app.getString(R.string.msg_wifi_lost))
+            scheduleRejoin()
             publish()
         }
+    }
+
+    /** The network was lost after it worked: join it again by itself, with growing pauses. */
+    private fun scheduleRejoin() {
+        val text = lastQrText ?: return
+        if (rejoinAttempts >= MAX_REJOIN_ATTEMPTS) {
+            postMessage(app.getString(R.string.msg_rejoin_failed))
+            return
+        }
+        rejoinAttempts++
+        val delay = minOf(1_000L shl (rejoinAttempts - 1), 15_000L)
+        postMessage(app.getString(R.string.msg_reconnecting))
+        main.postDelayed({
+            if (mutableState.value.role == Role.JOIN && sessionPeer == null && !joiningQr) {
+                joinWithQr(text)
+            }
+        }, delay)
     }
 
     private fun resetJoinFacts() {
@@ -305,7 +365,7 @@ class TransferHub(private val app: Application) {
 
     /**
      * Drops the other phone / the connection attempt. A host builds a fresh group (and QR code),
-     * a joining phone goes back to "scan or search".
+     * a joining phone goes back to "scan or search". Nothing is lost: unfinished files stay resumable.
      */
     fun disconnect() {
         cancelConnectTimeout()
@@ -317,11 +377,14 @@ class TransferHub(private val app: Application) {
         groupFormed = false
         lastInfo = null
         lastGroup = null
+        lastQrText = null
+        rejoinAttempts = 0
         val role = mutableState.value.role
         if (role == Role.HOST) {
             mutableState.update { it.copy(qr = null, qrUnavailable = false) }
             p2p?.disconnect { scheduleEnsureGroup(500) }
         } else {
+            lastPeerAddress = null
             p2p?.disconnect()
         }
         publish()
@@ -382,8 +445,14 @@ class TransferHub(private val app: Application) {
             val items = ArrayList<TransferItem>()
             for (uri in unique) {
                 try {
+                    UriSendSource.takePersistable(app, uri)
                     val source = UriSendSource.create(app, uri)
                     val id = itemIds.getAndIncrement()
+                    synchronized(lock) {
+                        refsById[id] = OutgoingRef(uri, source)
+                        itemIdByKey[source.key] = id
+                        inFlightKeys.add(source.key)
+                    }
                     sources.add(source)
                     ids.add(id)
                     items.add(TransferItem(id, source.name, source.size, Direction.OUT, FileState.QUEUED))
@@ -406,19 +475,22 @@ class TransferHub(private val app: Application) {
             synchronized(lock) { pendingBatches.addLast(ids) }
             val runner = link
             if (runner == null || !runner.send(sources)) {
-                synchronized(lock) { pendingBatches.remove(ids) }
+                synchronized(lock) {
+                    pendingBatches.remove(ids)
+                    sources.forEach { inFlightKeys.remove(it.key) }
+                }
                 markFailed(ids.toSet(), app.getString(R.string.msg_not_connected))
             }
         }
     }
 
-    /** Stops what this phone is sending. The channel restarts by itself a moment later. */
+    /** Stops what this phone is sending. Unfinished files stay resumable on both phones. */
     fun cancelOut() {
         cancelOutRequested = true
         link?.cancelSending()
     }
 
-    /** Stops what this phone is receiving. The channel restarts by itself a moment later. */
+    /** Stops what this phone is receiving. The partial data is kept until it is resumed or cleaned. */
     fun cancelIn() {
         cancelInRequested = true
         link?.cancelReceiving()
@@ -426,6 +498,66 @@ class TransferHub(private val app: Application) {
 
     fun clearFinished() {
         mutableState.update { s -> s.copy(items = s.items.filter { !it.isFinished }) }
+    }
+
+    /** Sends an unfinished outgoing file again, from where it stopped. Waits for the connection if needed. */
+    fun resume(key: String) {
+        worker.execute {
+            val entry = ledger.get(key) ?: return@execute
+            startResume(listOf(entry))
+        }
+    }
+
+    /** Forgets an unfinished outgoing file (and releases the access it was given). */
+    fun clean(key: String) {
+        worker.execute {
+            val removed = ledger.remove(key)
+            removed?.let { UriSendSource.releasePersistable(app, Uri.parse(it.uri)) }
+            synchronized(lock) {
+                waitingResume.remove(key)
+            }
+        }
+    }
+
+    /** Deletes the partial data of a file received here. */
+    fun cleanIncoming(key: String) {
+        worker.execute {
+            incoming.discard(key)
+        }
+    }
+
+    fun clearHistory() {
+        worker.execute {
+            history.clear()
+        }
+    }
+
+    /** Loads the unfinished files and the history. [onLoaded] runs on the main thread. */
+    fun loadRecords(onLoaded: (Records) -> Unit) {
+        worker.execute {
+            val rows = ArrayList<UnfinishedRow>()
+            for (e in ledger.all()) {
+                rows.add(UnfinishedRow(e.key, e.name, e.size, 0, true, e.state, e.reason, e.updatedAt))
+            }
+            for (p in incoming.partials()) {
+                rows.add(UnfinishedRow(p.key, p.name, p.size, p.stored, false, FileState.INTERRUPTED, "", p.updatedAt))
+            }
+            val records = Records(rows.sortedByDescending { it.updatedAt }, history.list())
+            main.post { onLoaded(records) }
+        }
+    }
+
+    /**
+     * Removes unfinished transfers that were not touched for five days. This runs when the app is opened
+     * (not in the background). [onDone] runs on the main thread.
+     */
+    fun purgeExpired(onDone: (PurgeResult) -> Unit) {
+        worker.execute {
+            val expiredOutgoing = ledger.purgeOlderThan(EXPIRY_MS)
+            expiredOutgoing.forEach { UriSendSource.releasePersistable(app, Uri.parse(it.uri)) }
+            val expiredIncoming = incoming.purgeOlderThan(EXPIRY_MS)
+            main.post { onDone(PurgeResult(expiredOutgoing.size, expiredIncoming)) }
+        }
     }
 
     private fun pendingShareCount(): Int = synchronized(lock) { pendingShare.size }
@@ -439,6 +571,117 @@ class TransferHub(private val app: Application) {
         mutableState.update { it.copy(pendingShare = 0) }
         if (files.isNotEmpty()) {
             enqueue(files)
+        }
+    }
+
+    // =============================================================================================
+    // Resumable outgoing files
+    // =============================================================================================
+
+    /** Sends the given unfinished files again. Runs on the worker thread. */
+    private fun startResume(entries: List<OutgoingEntry>) {
+        val runner = link
+        if (runner == null || !sendReady) {
+            synchronized(lock) { entries.forEach { waitingResume.add(it.key) } }
+            postMessage(app.getString(R.string.msg_resume_waiting))
+            return
+        }
+        val sources = ArrayList<SendSource>()
+        val ids = ArrayList<Long>()
+        val newItems = ArrayList<TransferItem>()
+        for (entry in entries) {
+            val alreadyGoing = synchronized(lock) { !inFlightKeys.add(entry.key) }
+            if (alreadyGoing) {
+                continue
+            }
+            try {
+                val uri = Uri.parse(entry.uri)
+                val source = UriSendSource.create(app, uri, entry.key)
+                val existing = synchronized(lock) { itemIdByKey[entry.key] }
+                val id = existing ?: itemIds.getAndIncrement()
+                synchronized(lock) {
+                    refsById[id] = OutgoingRef(uri, source)
+                    itemIdByKey[entry.key] = id
+                    waitingResume.remove(entry.key)
+                }
+                sources.add(source)
+                ids.add(id)
+                if (existing != null) {
+                    updateItem(id) { it.copy(state = FileState.QUEUED, message = null) }
+                } else {
+                    newItems.add(TransferItem(id, entry.name, entry.size, Direction.OUT, FileState.QUEUED))
+                }
+            } catch (e: Exception) {
+                synchronized(lock) { inFlightKeys.remove(entry.key) }
+                ledger.put(
+                    entry.copy(
+                        state = FileState.FAILED,
+                        reason = app.getString(R.string.msg_source_gone, describeError(e))
+                    )
+                )
+            }
+        }
+        if (sources.isEmpty()) {
+            return
+        }
+        addItems(newItems)
+        synchronized(lock) { pendingBatches.addLast(ids) }
+        if (!runner.send(sources)) {
+            synchronized(lock) {
+                pendingBatches.remove(ids)
+                sources.forEach {
+                    inFlightKeys.remove(it.key)
+                    waitingResume.add(it.key)
+                }
+            }
+            ids.forEach { id -> updateItem(id) { it.copy(state = FileState.INTERRUPTED) } }
+        }
+    }
+
+    /** Called when the send channel is (again) ready: continue everything that was interrupted. */
+    private fun resumeAfterReconnect() {
+        worker.execute {
+            val wanted = synchronized(lock) { waitingResume.toSet() }
+            val entries = ledger.all().filter { it.state == FileState.INTERRUPTED || it.key in wanted }
+            startResume(entries)
+        }
+    }
+
+    /** Records a finished outgoing file: DONE clears it, anything else keeps it resumable, and history gets it. */
+    private fun onOutgoingFinished(id: Long, name: String, state: FileState, message: String?, location: String?) {
+        val ref = synchronized(lock) { refsById[id] } ?: return
+        val peer = sessionPeer ?: ""
+        worker.execute {
+            val key = ref.source.key
+            synchronized(lock) { inFlightKeys.remove(key) }
+            when (state) {
+                FileState.DONE -> {
+                    ledger.remove(key)
+                    UriSendSource.releasePersistable(app, ref.uri)
+                    synchronized(lock) { waitingResume.remove(key) }
+                }
+
+                FileState.QUEUED, FileState.ACTIVE -> Unit
+                else -> ledger.put(
+                    OutgoingEntry(
+                        key = key,
+                        uri = ref.uri.toString(),
+                        name = ref.source.name,
+                        size = ref.source.size,
+                        lastModified = ref.source.lastModified,
+                        state = state,
+                        reason = message.orEmpty(),
+                        updatedAt = 0
+                    )
+                )
+            }
+            history.add(
+                HistoryEntry(
+                    time = System.currentTimeMillis(), outgoing = true, peer = peer, name = name,
+                    size = ref.source.size, state = state, location = location ?: ref.uri.toString(),
+                    reason = message.orEmpty()
+                )
+            )
         }
     }
 
@@ -487,6 +730,16 @@ class TransferHub(private val app: Application) {
                 compareBy<P2pPeer>({ it.status != WifiP2pDevice.AVAILABLE }, { it.name.lowercase() })
             )
             mutableState.update { it.copy(peers = sorted) }
+            // Join side, the connection was lost: reconnect to the same device by itself.
+            val wanted = lastPeerAddress
+            if (mutableState.value.role == Role.JOIN && wanted != null && !groupFormed && connectingTo == null &&
+                sessionPeer == null && autoReconnectAttempts < MAX_AUTO_RECONNECTS
+            ) {
+                sorted.firstOrNull { it.address == wanted && it.status == WifiP2pDevice.AVAILABLE }?.let {
+                    autoReconnectAttempts++
+                    connectTo(it)
+                }
+            }
         }
 
         override fun onDiscovery(active: Boolean) {
@@ -524,6 +777,10 @@ class TransferHub(private val app: Application) {
             if (role == Role.HOST && !creatingGroup) {
                 // A host without a group is useless: build it again (debounced).
                 scheduleEnsureGroup(1_000)
+            }
+            if (role == Role.JOIN && lastPeerAddress != null && linkSource != LinkSource.QR) {
+                // the group went away: search again, the previous device is reconnected when it shows up
+                main.postDelayed({ if (!groupFormed && sessionPeer == null) discoverPeers() }, 2_000)
             }
             publish()
             return
@@ -656,7 +913,7 @@ class TransferHub(private val app: Application) {
         }
         stopLink()
         val name = mutableState.value.selfName.ifBlank { Build.MODEL ?: "Android" }
-        val runner = DuplexLink(name, tuning, sinks, outEvents, inEvents, linkListener)
+        val runner = DuplexLink(name, tuning, incoming, outEvents, inEvents, linkListener)
         link = runner
         linkKey = key
         linkSource = source
@@ -679,6 +936,10 @@ class TransferHub(private val app: Application) {
 
     private val linkListener = object : LinkListener {
 
+        override fun onInternalError(error: Throwable) {
+            android.util.Log.e("WifiP2P", "Recovered from an internal error, the connection was kept", error)
+        }
+
         override fun onChannel(direction: ChannelDirection, ready: Boolean, peerName: String?, detail: String?) {
             if (direction == ChannelDirection.SEND) {
                 sendReady = ready
@@ -698,11 +959,14 @@ class TransferHub(private val app: Application) {
                     joiningQr = false
                     connectingTo = null
                     joinMethod = JoinMethod.NONE
+                    rejoinAttempts = 0
+                    autoReconnectAttempts = 0
                     cancelConnectTimeout()
                     postMessage(app.getString(R.string.msg_connected_to, peer))
                 }
                 if (direction == ChannelDirection.SEND) {
                     flushPendingShare()
+                    resumeAfterReconnect()
                 }
             } else {
                 if (direction == ChannelDirection.SEND) {
@@ -719,10 +983,6 @@ class TransferHub(private val app: Application) {
                 }
             }
             publish()
-        }
-
-        override fun onInternalError(error: Throwable) {
-            android.util.Log.e("WifiP2P", "Recovered from an internal error, the connection was kept", error)
         }
 
         override fun onHostUnreachable() {
@@ -765,14 +1025,18 @@ class TransferHub(private val app: Application) {
         override fun onFileFinished(index: Int, name: String, state: FileState, message: String?, location: String?) {
             val id = idOut(index) ?: return
             updateItem(id) { it.copy(state = state, message = message, location = location) }
+            onOutgoingFinished(id, name, state, message, location)
         }
 
         override fun onBatchFinished() {
             val ids = synchronized(lock) { batchIdsOut.toSet() }
             val batchItems = mutableState.value.items.filter { it.id in ids }
             val done = batchItems.count { it.state == FileState.DONE }
+            val interrupted = batchItems.count { it.state == FileState.INTERRUPTED }
             mutableState.update { it.copy(activeOut = null) }
-            if (batchItems.isNotEmpty() && !cancelOutRequested) {
+            if (interrupted > 0) {
+                postMessage(app.getString(R.string.msg_interrupted_continues, interrupted))
+            } else if (batchItems.isNotEmpty() && !cancelOutRequested) {
                 postMessage(app.getString(R.string.msg_sent_summary, done, batchItems.size))
             }
         }
@@ -805,14 +1069,27 @@ class TransferHub(private val app: Application) {
         override fun onFileFinished(index: Int, name: String, state: FileState, message: String?, location: String?) {
             val id = idIn(index) ?: return
             updateItem(id) { it.copy(state = state, message = message, location = location) }
+            val peer = sessionPeer ?: ""
+            val size = mutableState.value.items.firstOrNull { it.id == id }?.size ?: 0L
+            worker.execute {
+                history.add(
+                    HistoryEntry(
+                        time = System.currentTimeMillis(), outgoing = false, peer = peer, name = name,
+                        size = size, state = state, location = location ?: "", reason = message.orEmpty()
+                    )
+                )
+            }
         }
 
         override fun onBatchFinished() {
             val ids = synchronized(lock) { receivedIds.values.toSet() }
             val batchItems = mutableState.value.items.filter { it.id in ids }
             val done = batchItems.count { it.state == FileState.DONE }
+            val interrupted = batchItems.count { it.state == FileState.INTERRUPTED }
             mutableState.update { it.copy(activeIn = null) }
-            if (batchItems.isNotEmpty() && !cancelInRequested) {
+            if (interrupted > 0) {
+                postMessage(app.getString(R.string.msg_interrupted_partial, interrupted))
+            } else if (batchItems.isNotEmpty() && !cancelInRequested) {
                 postMessage(app.getString(R.string.msg_received_summary, done, batchItems.size))
             }
         }
@@ -860,45 +1137,78 @@ class TransferHub(private val app: Application) {
         }
     }
 
-    /** Everything this phone still had to SEND cannot continue: close it with a precise reason. */
+    /**
+     * The send channel went down: files that were still waiting for their turn are recorded as
+     * interrupted (they continue on the next connection). The file being sent is reported by the
+     * engine itself.
+     */
     private fun abortOut(reason: String?) {
         val cancelled = cancelOutRequested
-        synchronized(lock) {
+        val leftovers = synchronized(lock) {
+            val ids = pendingBatches.flatten()
             pendingBatches.clear()
             batchIdsOut = emptyList()
+            ids
         }
-        abortItems(Direction.OUT, cancelled, reason)
-        mutableState.update { it.copy(activeOut = null) }
+        val state = if (cancelled) FileState.CANCELLED else FileState.INTERRUPTED
+        val message = if (cancelled) {
+            app.getString(R.string.msg_cancelled)
+        } else {
+            reason?.takeIf { it.isNotBlank() } ?: app.getString(R.string.msg_interrupted_will_continue)
+        }
+        mutableState.update { s ->
+            s.copy(
+                activeOut = null,
+                items = s.items.map {
+                    if (it.id in leftovers && (it.state == FileState.QUEUED || it.state == FileState.ACTIVE)) {
+                        it.copy(state = state, message = message)
+                    } else {
+                        it
+                    }
+                }
+            )
+        }
+        worker.execute {
+            for (id in leftovers) {
+                val ref = synchronized(lock) { refsById[id] } ?: continue
+                val key = ref.source.key
+                synchronized(lock) { inFlightKeys.remove(key) }
+                ledger.put(
+                    OutgoingEntry(
+                        key, ref.uri.toString(), ref.source.name, ref.source.size, ref.source.lastModified,
+                        state, message, 0
+                    )
+                )
+            }
+        }
     }
 
-    /** Everything this phone was RECEIVING cannot continue. */
+    /** The receive channel went down: whatever was arriving is kept as a partial file. */
     private fun abortIn(reason: String?) {
         val cancelled = cancelInRequested
         synchronized(lock) { receivedIds.clear() }
-        abortItems(Direction.IN, cancelled, reason)
-        mutableState.update { it.copy(activeIn = null) }
+        val message = if (cancelled) {
+            app.getString(R.string.msg_cancelled)
+        } else {
+            reason?.takeIf { it.isNotBlank() } ?: app.getString(R.string.msg_interrupted_will_continue)
+        }
+        mutableState.update { s ->
+            s.copy(
+                activeIn = null,
+                items = s.items.map {
+                    if (it.direction == Direction.IN && (it.state == FileState.QUEUED || it.state == FileState.ACTIVE)) {
+                        it.copy(state = if (cancelled) FileState.CANCELLED else FileState.INTERRUPTED, message = message)
+                    } else {
+                        it
+                    }
+                }
+            )
+        }
     }
 
     private fun abortAll(reason: String?) {
         abortOut(reason)
         abortIn(reason)
-    }
-
-    private fun abortItems(direction: Direction, cancelled: Boolean, reason: String?) {
-        val message = if (cancelled) {
-            app.getString(R.string.msg_cancelled)
-        } else {
-            reason?.takeIf { it.isNotBlank() } ?: app.getString(R.string.error_connection_lost)
-        }
-        mutableState.update { s ->
-            s.copy(items = s.items.map {
-                if (it.direction == direction && (it.state == FileState.QUEUED || it.state == FileState.ACTIVE)) {
-                    it.copy(state = if (cancelled) FileState.CANCELLED else FileState.FAILED, message = message)
-                } else {
-                    it
-                }
-            })
-        }
     }
 
     private fun postMessage(text: String) {
@@ -925,6 +1235,9 @@ class TransferHub(private val app: Application) {
         lastInfo = null
         lastGroup = null
         qrTarget = null
+        lastQrText = null
+        rejoinAttempts = 0
+        autoReconnectAttempts = 0
         synchronized(lock) {
             pendingBatches.clear()
             batchIdsOut = emptyList()
@@ -975,7 +1288,10 @@ class TransferHub(private val app: Application) {
     private companion object {
         const val MAX_ITEMS = 1_500
         const val MAX_GROUP_ATTEMPTS = 4
+        const val MAX_REJOIN_ATTEMPTS = 8
+        const val MAX_AUTO_RECONNECTS = 8
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val GROUP_TIMEOUT_MS = 25_000L
+        const val EXPIRY_MS = 5L * 24 * 60 * 60 * 1000
     }
 }

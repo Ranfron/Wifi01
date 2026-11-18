@@ -10,22 +10,24 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /**
- * Wire protocol (v1). Everything is big-endian.
+ * Wire protocol (v2). Everything is big-endian.
  *
- * Control messages are small length-prefixed frames:  `[type:1][length:4][payload]`.
- * File contents are NOT framed: after a FILE frame the sender writes exactly `size` raw bytes
- * (maximum speed, zero per-chunk overhead) followed by a FILE_END frame carrying a CRC-32.
+ * Control messages are small length-prefixed frames: `[type:1][length:4][payload]`.
+ * File contents are NOT framed: after FILE_START the sender writes exactly `size - offset` raw bytes,
+ * then FILE_END carries the CRC-32 of the whole file.
  *
- *   both    : HELLO
- *   sender  : BATCH -> (receiver: BATCH_REPLY) -> { FILE, raw bytes, FILE_END -> (receiver: FILE_ACK) }* -> BATCH_END
+ *   both    : HELLO, HEARTBEAT (idle side every few seconds; the receiver also during transfers)
+ *   sender  : BATCH -> (receiver: BATCH_REPLY) ->
+ *             { FILE(header with key) -> (receiver: FILE_START(offset) or a refusal),
+ *               raw bytes, FILE_END -> (receiver: FILE_ACK) }* -> BATCH_END
  *
- * Unlike the old Java-serialization based protocol nothing from the network is ever deserialized
- * into arbitrary objects, every length is bounded and every file is size- and checksum-verified.
+ * [FILE_START.offset] lets an interrupted file continue where it stopped: the receiver keeps the
+ * partial bytes, the sender sends only the rest.
  */
 object Protocol {
     const val PORT = 1995
     const val MAGIC = 0x57465032 // "WFP2"
-    const val VERSION = 1
+    const val VERSION = 2
 
     const val ROLE_SENDER = 1
     const val ROLE_RECEIVER = 2
@@ -37,6 +39,13 @@ object Protocol {
     const val TYPE_FILE_END = 5
     const val TYPE_FILE_ACK = 6
     const val TYPE_BATCH_END = 7
+    const val TYPE_FILE_START = 8
+    const val TYPE_HEARTBEAT = 9
+
+    const val MAX_PAYLOAD = 64 * 1024
+    const val MAX_FILES_PER_BATCH = 1_000_000
+    const val MAX_NAME_CHARS = 255
+    const val MAX_KEY_CHARS = 128
 
     /** The role the other side must have on the same connection. */
     fun complementOf(role: Int): Int? = when (role) {
@@ -44,10 +53,6 @@ object Protocol {
         ROLE_RECEIVER -> ROLE_SENDER
         else -> null
     }
-
-    const val MAX_PAYLOAD = 64 * 1024
-    const val MAX_FILES_PER_BATCH = 1_000_000
-    const val MAX_NAME_CHARS = 255
 }
 
 class ProtocolException(message: String) : IOException(message)
@@ -153,6 +158,9 @@ data class Hello(val role: Int, val deviceName: String, val version: Int = Proto
                 throw ProtocolException("The other device is not running this app")
             }
             val version = it.readUnsignedShort()
+            if (version != Protocol.VERSION) {
+                throw ProtocolException("The two phones run different versions of the app - update both")
+            }
             val role = it.readUnsignedByte()
             Hello(role = role, deviceName = it.readUTF(), version = version)
         }
@@ -192,12 +200,17 @@ data class BatchReply(val accepted: Boolean, val message: String) {
     }
 }
 
+/**
+ * Announces one file. [key] identifies the file across attempts: a resumed transfer announces the
+ * same key, so the receiver can find the bytes it already has.
+ */
 data class FileHeader(
     val index: Int,
     val name: String,
     val size: Long,
     val mimeType: String,
-    val lastModified: Long
+    val lastModified: Long,
+    val key: String = ""
 ) {
 
     fun toFrame(): Frame = Frame(Protocol.TYPE_FILE, encode {
@@ -206,6 +219,7 @@ data class FileHeader(
         it.writeLong(size)
         it.writeUTF(mimeType.take(100))
         it.writeLong(lastModified)
+        it.writeUTF(key.take(Protocol.MAX_KEY_CHARS))
     })
 
     companion object {
@@ -215,18 +229,49 @@ data class FileHeader(
             val size = it.readLong()
             val mime = it.readUTF()
             val modified = it.readLong()
-            if (index < 0 || size < 0) {
+            val key = it.readUTF()
+            if (index < 0 || size < 0 || key.length > Protocol.MAX_KEY_CHARS) {
                 throw ProtocolException("Invalid file header")
             }
-            FileHeader(index, name, size, mime, modified)
+            FileHeader(index, name, size, mime, modified, key)
         }
     }
 }
 
 /**
- * Sent by the sender after the raw bytes of a file. [crc32] is the CRC-32 of exactly those bytes.
- * [incomplete] = true means the sending phone could not read the whole file: the missing bytes were
- * padded so the stream stays in sync, and the receiver must drop the file (the connection goes on).
+ * The receiver's answer to a FILE header: either "send from [offset]" (0 for a new file, more for a
+ * resumed one), or a refusal with a [refusal] reason, in which case no bytes are sent at all.
+ */
+data class FileStart(val index: Int, val offset: Long, val prefixCrc: Long = 0L, val refusal: String = "") {
+
+    val accepted: Boolean
+        get() = refusal.isEmpty()
+
+    fun toFrame(): Frame = Frame(Protocol.TYPE_FILE_START, encode {
+        it.writeInt(index)
+        it.writeLong(offset)
+        it.writeInt(prefixCrc.toInt())
+        it.writeUTF(refusal.take(300))
+    })
+
+    companion object {
+        fun parse(frame: Frame): FileStart = decode(frame, Protocol.TYPE_FILE_START) {
+            val index = it.readInt()
+            val offset = it.readLong()
+            val prefixCrc = it.readInt().toLong() and 0xFFFFFFFFL
+            val refusal = it.readUTF()
+            if (index < 0 || offset < 0) {
+                throw ProtocolException("Invalid file start")
+            }
+            FileStart(index, offset, prefixCrc, refusal)
+        }
+    }
+}
+
+/**
+ * Sent by the sender after the raw bytes of a file. [crc32] is the CRC-32 of the WHOLE file (the
+ * stored part included on a resume). [incomplete] = true means the sending phone could not read the
+ * whole file: the missing bytes were padded so the stream stays in sync, and the file is dropped.
  */
 data class FileEnd(val crc32: Long, val incomplete: Boolean = false) {
 
@@ -256,4 +301,9 @@ data class FileAck(val index: Int, val ok: Boolean, val message: String) {
             FileAck(index = it.readInt(), ok = it.readBoolean(), message = it.readUTF())
         }
     }
+}
+
+/** Liveness signal. Sent between files and by the receiver during transfers, never inside file data. */
+object Heartbeat {
+    fun frame(): Frame = Frame(Protocol.TYPE_HEARTBEAT)
 }

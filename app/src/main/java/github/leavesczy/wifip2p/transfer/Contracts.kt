@@ -3,8 +3,9 @@ package github.leavesczy.wifip2p.transfer
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.zip.CRC32
 
-/** A file that can be sent. The engine streams it directly - nothing is copied to a temp file first. */
+/** A file that can be sent. The engine streams it directly - nothing is copied first. */
 interface SendSource {
     val name: String
 
@@ -13,33 +14,58 @@ interface SendSource {
     val mimeType: String
     val lastModified: Long
 
+    /**
+     * Stable id of this file across attempts. A resumed transfer announces the same key, so the
+     * receiver finds the bytes it already has. Empty means "derive it from name, size and time".
+     */
+    val key: String
+        get() = ""
+
     @Throws(IOException::class)
     fun open(): InputStream
 }
 
-/** Output of one received file. */
-interface SinkHandle {
+/** One received file. Its bytes survive an interrupted transfer, so it can be resumed later. */
+interface IncomingFile {
+    /** Bytes stored by an earlier attempt. The sender continues from here (0 for a new file). */
+    val offset: Long
+
+    /** Feeds the [offset] stored bytes into [crc], so the checksum covers the whole file. */
+    @Throws(IOException::class)
+    fun feedStoredBytes(crc: CRC32)
+
+    /** Where the new bytes are written (after the stored ones). */
     val stream: OutputStream
 
-    /** Closes [stream] and publishes the file. Returns a location string (e.g. a content Uri) or null. */
+    /** Publishes the complete file and removes the partial data. Returns its location. */
     @Throws(IOException::class)
     fun commit(): String?
 
-    /** Closes [stream] and deletes the partial file. Must never throw. */
-    fun abort()
+    /** Closes the stream but KEEPS the partial bytes, so a later attempt can resume. Never throws. */
+    fun suspend()
+
+    /** Closes the stream and deletes everything of this file. Never throws. */
+    fun discard()
 }
 
-interface SinkFactory {
+/** Decides where received files go, and keeps partial files so they can be resumed. */
+interface IncomingStore {
     /** Free space in bytes, used to refuse a batch that cannot fit. */
     fun availableBytes(): Long
 
+    /** Starts a new file, or continues the partial file with the same [key] and fingerprint. */
     @Throws(IOException::class)
-    fun create(name: String, size: Long, mimeType: String, lastModified: Long): SinkHandle
+    fun open(key: String, name: String, size: Long, mimeType: String, lastModified: Long): IncomingFile
 }
 
-enum class FileState { QUEUED, ACTIVE, DONE, FAILED, CANCELLED }
+/**
+ * DONE - arrived and stored. FAILED - refused or damaged, the user decides. CANCELLED - stopped by the
+ * user. INTERRUPTED - the connection broke; the file can continue by itself when the phones meet again.
+ */
+enum class FileState { QUEUED, ACTIVE, DONE, FAILED, CANCELLED, INTERRUPTED }
 
 data class FileProgress(
+    /** Absolute bytes of this file (a resumed file starts above zero). */
     val index: Int,
     val name: String,
     val fileBytes: Long,

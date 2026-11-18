@@ -10,15 +10,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
-import android.os.StatFs
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import github.leavesczy.wifip2p.transfer.FileNames
+import github.leavesczy.wifip2p.transfer.Publisher
 import github.leavesczy.wifip2p.transfer.SendSource
-import github.leavesczy.wifip2p.transfer.SinkFactory
-import github.leavesczy.wifip2p.transfer.SinkHandle
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
@@ -26,7 +24,6 @@ import java.io.FileOutputStream
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
-import java.io.OutputStream
 import java.util.UUID
 
 internal const val DOWNLOAD_SUBFOLDER = "WifiP2P"
@@ -37,16 +34,26 @@ internal fun guessMimeType(name: String): String {
     return mime ?: "application/octet-stream"
 }
 
+/** Folder for incoming files that are still arriving. Private to the app, on the big storage volume. */
+object IncomingFolder {
+    fun of(context: Context): File {
+        val base = context.getExternalFilesDir(null) ?: context.filesDir
+        return File(base, "incoming")
+    }
+}
+
 /**
- * A file chosen with the system picker or shared from another app.
- * It is read straight from its content Uri while sending - nothing is copied to a temp file first.
+ * A file chosen with the system picker or shared from another app. It is read straight from its
+ * content Uri while sending. The [key] stays the same across attempts, so a resume finds the partial
+ * data on the other phone.
  */
 class UriSendSource private constructor(
     private val resolver: ContentResolver,
     private val uri: Uri,
     override val name: String,
     override val size: Long,
-    override val mimeType: String
+    override val mimeType: String,
+    override val key: String
 ) : SendSource {
 
     override val lastModified: Long = 0
@@ -64,8 +71,24 @@ class UriSendSource private constructor(
             File(context.cacheDir, STAGING_DIR).deleteRecursively()
         }
 
+        /** Keeps read access to [uri] across app restarts, so an interrupted file can be resumed later. */
+        fun takePersistable(context: Context, uri: Uri) {
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) {
+                // some providers (shared files) do not allow it - such a file just cannot be resumed later
+            }
+        }
+
+        fun releasePersistable(context: Context, uri: Uri) {
+            try {
+                context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) {
+            }
+        }
+
         @Throws(IOException::class)
-        fun create(context: Context, uri: Uri): SendSource {
+        fun create(context: Context, uri: Uri, key: String? = null): SendSource {
             // Only content:// is accepted. A file:// Uri sent by another app could point into this
             // app's private data (confused-deputy attack).
             if (uri.scheme != ContentResolver.SCHEME_CONTENT) {
@@ -97,7 +120,6 @@ class UriSendSource private constructor(
             }
             val name = FileNames.sanitize(displayName ?: uri.lastPathSegment ?: "file")
             val mime = resolver.getType(uri)?.takeIf { it.contains('/') } ?: guessMimeType(name)
-
             if (size < 0) {
                 size = try {
                     resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
@@ -105,14 +127,15 @@ class UriSendSource private constructor(
                     throw IOException("Cannot open file", e)
                 }
             }
+            val fileKey = key ?: UUID.randomUUID().toString()
             if (size < 0) {
-                return stage(context, uri, name, mime)
+                return stage(context, uri, name, mime, fileKey)
             }
-            return UriSendSource(resolver, uri, name, size, mime)
+            return UriSendSource(resolver, uri, name, size, mime, fileKey)
         }
 
         /** The provider does not know the size (streamed/virtual files): copy once to the cache to learn it. */
-        private fun stage(context: Context, uri: Uri, name: String, mime: String): SendSource {
+        private fun stage(context: Context, uri: Uri, name: String, mime: String, fileKey: String): SendSource {
             val dir = File(context.cacheDir, STAGING_DIR)
             if (!dir.isDirectory && !dir.mkdirs()) {
                 throw IOException("Cannot prepare file")
@@ -136,11 +159,13 @@ class UriSendSource private constructor(
             }
             val stagedName = name
             val stagedMime = mime
+            val stagedKey = fileKey
             return object : SendSource {
                 override val name = stagedName
                 override val size = file.length()
                 override val mimeType = stagedMime
                 override val lastModified = 0L
+                override val key = stagedKey
 
                 override fun open(): InputStream {
                     return object : FilterInputStream(FileInputStream(file)) {
@@ -159,111 +184,54 @@ class UriSendSource private constructor(
 }
 
 /**
- * Saves received files into the public Downloads/WifiP2P folder, so the user can find them in any
- * file manager. Written through MediaStore on Android 10+ (no storage permission needed) and as
- * plain files on Android 6-9.
+ * Publishes a complete received file into Downloads/WifiP2P, so the user finds it in any file manager.
+ * Android 10+ uses MediaStore (no storage permission needed); older systems get a plain file copy.
  */
-class DownloadsSinkFactory(private val context: Context) : SinkFactory {
+class DownloadsPublisher(private val context: Context) : Publisher {
 
-    @Suppress("DEPRECATION")
-    override fun availableBytes(): Long {
-        return try {
-            StatFs(Environment.getExternalStorageDirectory().path).availableBytes
-        } catch (_: Exception) {
-            Long.MAX_VALUE
+    override fun publish(part: File, name: String, mimeType: String): String? {
+        return if (Build.VERSION.SDK_INT >= 29) publishMediaStore(part, name, mimeType) else publishLegacy(part, name)
+    }
+
+    private fun publishMediaStore(part: File, name: String, mimeType: String): String {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBFOLDER")
+            put(MediaStore.MediaColumns.IS_PENDING, 1) // hidden from other apps until the copy is complete
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("Cannot create a file in Downloads")
+        try {
+            val out = resolver.openOutputStream(uri, "w") ?: throw IOException("Cannot open the new file")
+            out.use { target ->
+                FileInputStream(part).use { source -> source.copyTo(target, 1 shl 20) }
+            }
+            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(uri, done, null, null)
+            return uri.toString()
+        } catch (e: Exception) {
+            try {
+                resolver.delete(uri, null, null)
+            } catch (_: Exception) {
+            }
+            throw if (e is IOException) e else IOException(e.message, e)
         }
     }
 
-    override fun create(name: String, size: Long, mimeType: String, lastModified: Long): SinkHandle {
-        // The MIME type is derived from the (sanitised) name on purpose: MediaStore appends an extension
-        // when the claimed type and the name disagree, and a sender is not a trustworthy source for it.
-        val mime = guessMimeType(name)
-        return if (Build.VERSION.SDK_INT >= 29) {
-            MediaStoreHandle(context.contentResolver, name, mime)
-        } else {
-            createLegacy(name, mime)
-        }
-    }
-
     @Suppress("DEPRECATION")
-    private fun createLegacy(name: String, mime: String): SinkHandle {
+    private fun publishLegacy(part: File, name: String): String {
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), DOWNLOAD_SUBFOLDER
         )
         if (!dir.isDirectory && !dir.mkdirs()) {
             throw IOException("Cannot create the Downloads/$DOWNLOAD_SUBFOLDER folder")
         }
-        val file = File(dir, FileNames.unique(name) { File(dir, it).exists() })
-        return LegacyHandle(context, file, mime)
-    }
-
-    private class MediaStoreHandle(
-        private val resolver: ContentResolver,
-        name: String,
-        mime: String
-    ) : SinkHandle {
-        private val uri: Uri
-        override val stream: OutputStream
-
-        init {
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-                put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBFOLDER")
-                put(MediaStore.MediaColumns.IS_PENDING, 1) // hidden from other apps until the file is complete
-            }
-            uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("Cannot create a file in Downloads")
-            stream = try {
-                resolver.openOutputStream(uri, "w") ?: throw IOException("Cannot open the new file")
-            } catch (e: Exception) {
-                try {
-                    resolver.delete(uri, null, null)
-                } catch (_: Exception) {
-                }
-                throw if (e is IOException) e else IOException(e.message, e)
-            }
-        }
-
-        override fun commit(): String? {
-            stream.close()
-            val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(uri, values, null, null)
-            return uri.toString()
-        }
-
-        override fun abort() {
-            try {
-                stream.close()
-            } catch (_: Exception) {
-            }
-            try {
-                resolver.delete(uri, null, null)
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    private class LegacyHandle(
-        private val context: Context,
-        private val file: File,
-        private val mime: String
-    ) : SinkHandle {
-        override val stream: OutputStream = FileOutputStream(file)
-
-        override fun commit(): String? {
-            stream.close()
-            MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(mime), null)
-            return Uri.fromFile(file).toString()
-        }
-
-        override fun abort() {
-            try {
-                stream.close()
-            } catch (_: Exception) {
-            }
-            file.delete()
-        }
+        val target = File(dir, FileNames.unique(name) { File(dir, it).exists() })
+        part.copyTo(target)
+        MediaScannerConnection.scanFile(context, arrayOf(target.absolutePath), null, null)
+        return Uri.fromFile(target).toString()
     }
 }
 

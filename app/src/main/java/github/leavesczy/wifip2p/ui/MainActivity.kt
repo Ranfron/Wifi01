@@ -2,14 +2,17 @@ package github.leavesczy.wifip2p.ui
 
 import github.leavesczy.wifip2p.transferHub
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.widget.ImageView
+import android.widget.Toast
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.databinding.ActivityMainBinding
+import github.leavesczy.wifip2p.transferHub
 import github.leavesczy.wifip2p.hub.Role
 import github.leavesczy.wifip2p.util.PermissionFlow
 import github.leavesczy.wifip2p.util.Permissions
@@ -54,6 +57,17 @@ class MainActivity : AppCompatActivity() {
         binding.btnShowQr.setOnClickListener { open(Role.HOST) }
         binding.btnScanQr.setOnClickListener { open(Role.JOIN) }
         binding.btnSearchPhones.setOnClickListener { open(Role.JOIN, search = true) }
+        binding.btnHistory.setOnClickListener { startActivity(Intent(this, HistoryActivity::class.java)) }
+
+        if (savedInstanceState == null) {
+            // Unfinished transfers older than five days are removed when the app is opened, not in the background.
+            transferHub().purgeExpired { result ->
+                val removed = result.outgoing + result.incoming
+                if (removed > 0) {
+                    Toast.makeText(this, getString(R.string.msg_expired_removed, removed), Toast.LENGTH_LONG).show()
+                }
+            }
+        }
         binding.btnClearShare.setOnClickListener { transferHub().clearPendingShare(); refreshChecks() }
         binding.btnGrantPermission.setOnClickListener { permissionFlow.ensure() }
         binding.btnWifiSettings.setOnClickListener { SystemChecks.openWifiSettings(this) }

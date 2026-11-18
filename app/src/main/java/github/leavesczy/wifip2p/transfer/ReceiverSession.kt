@@ -6,27 +6,31 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.CRC32
 
 /**
- * Receiver half of one TCP connection. [serve] loops over incoming batches until the connection
- * ends. Files are streamed straight into the [SinkFactory] (no temp copies), size- and
- * CRC-verified, and a partially received file is always deleted.
+ * Receiver half of one TCP connection. [serve] loops over incoming batches until the connection ends.
  *
- * A file that cannot be stored (no permission, disk full, a checksum error, ...) is rejected on its
- * own: its bytes are still read and dropped, so the stream stays in sync and the rest of the batch
- * arrives normally. Only a broken connection ends the session.
+ * Files are streamed straight into the [IncomingStore] and checksummed. Two rules keep transfers
+ * robust:
+ *  - a connection that breaks keeps the partial bytes (the sender continues from them later);
+ *  - a file that cannot be stored is refused or dropped on its own - the rest of the batch goes on.
+ *
+ * Only a damaged file (checksum mismatch, incomplete source) throws its partial data away.
  */
 class ReceiverSession(
     private val socket: Socket,
-    private val sinks: SinkFactory,
+    private val store: IncomingStore,
     private val tuning: Tuning,
     private val events: SessionEvents
 ) : Closeable {
 
     private val input: InputStream = socket.getInputStream()
     private val output: OutputStream = socket.getOutputStream()
+    private val writeLock = Any()
     private val pool = ChunkPool(tuning.chunkSize, tuning.queueDepth)
+    private val closed = AtomicBoolean(false)
 
     private var batchActive = false
     private var batchTotal = 0L
@@ -37,42 +41,73 @@ class ReceiverSession(
     private var lastEmitNanos = 0L
 
     override fun close() {
+        closed.set(true)
         try {
             socket.close()
         } catch (_: IOException) {
         }
     }
 
+    private fun write(frame: Frame) {
+        synchronized(writeLock) {
+            FrameIO.write(output, frame)
+        }
+    }
+
     /** Blocks until the sender disconnects; always ends with an exception (EOF on a clean close). */
     @Throws(IOException::class)
     fun serve(cancel: CancelToken) {
-        while (true) {
-            cancel.throwIfCancelled()
-            val frame = FrameIO.read(input)
-            when (frame.type) {
-                Protocol.TYPE_BATCH -> onBatch(BatchInfo.parse(frame))
-                Protocol.TYPE_FILE -> onFile(FileHeader.parse(frame), cancel)
-                Protocol.TYPE_BATCH_END -> {
-                    batchActive = false
-                    events.onBatchFinished()
-                }
+        startHeartbeat()
+        try {
+            while (true) {
+                cancel.throwIfCancelled()
+                // Silence from the sender for longer than this = dead. The sender heartbeats while idle.
+                socket.soTimeout = tuning.deadAfterMs.toInt()
+                val frame = FrameIO.read(input)
+                when (frame.type) {
+                    Protocol.TYPE_HEARTBEAT -> Unit
+                    Protocol.TYPE_BATCH -> onBatch(BatchInfo.parse(frame))
+                    Protocol.TYPE_FILE -> onFile(FileHeader.parse(frame), cancel)
+                    Protocol.TYPE_BATCH_END -> {
+                        batchActive = false
+                        events.onBatchFinished()
+                    }
 
-                else -> throw ProtocolException("Unexpected message ${frame.type}")
+                    else -> throw ProtocolException("Unexpected message ${frame.type}")
+                }
             }
+        } finally {
+            close()
         }
+    }
+
+    private fun startHeartbeat() {
+        val thread = Thread({
+            try {
+                while (!closed.get()) {
+                    Thread.sleep(tuning.heartbeatIntervalMs)
+                    if (!closed.get()) {
+                        write(Heartbeat.frame())
+                    }
+                }
+            } catch (_: Throwable) {
+                close()
+            }
+        }, "wfp2p-receiver-heartbeat")
+        thread.isDaemon = true
+        thread.start()
     }
 
     @Throws(IOException::class)
     private fun onBatch(info: BatchInfo) {
         val free = try {
-            sinks.availableBytes()
+            store.availableBytes()
         } catch (_: Exception) {
             Long.MAX_VALUE
         }
         batchActive = false
         if (info.totalBytes > free) {
-            FrameIO.write(
-                output,
+            write(
                 BatchReply(
                     false,
                     "Not enough storage on the receiver (needs ${Formatters.size(info.totalBytes)}, " +
@@ -88,7 +123,7 @@ class ReceiverSession(
         batchFilesSeen = 0
         meter = SpeedMeter()
         lastEmitNanos = 0
-        FrameIO.write(output, BatchReply(true, "").toFrame())
+        write(BatchReply(true, "").toFrame())
         events.onBatchStarted(info.fileCount, info.totalBytes)
     }
 
@@ -113,62 +148,67 @@ class ReceiverSession(
         }
         batchFilesSeen++
         val name = FileNames.sanitize(header.name)
-        events.onFileStarted(header.index, name, header.size)
+        val key = header.key.ifEmpty { "$name|${header.size}|${header.lastModified}" }
+        val prefix = CRC32()
 
-        val handle: SinkHandle
-        try {
-            handle = sinks.create(name, header.size, header.mimeType, header.lastModified)
+        val incoming: IncomingFile = try {
+            store.open(key, name, header.size, header.mimeType, header.lastModified)
         } catch (e: Exception) {
-            rejectFile(header, name, "Cannot create file: ${describeError(e)}", cancel)
+            refuse(header, name, "Cannot create file: ${describeError(e)}")
             return
         }
-        receiveInto(handle, header, name, cancel)
-    }
-
-    /** The file cannot be stored: read its bytes and drop them, then tell the sender why. */
-    @Throws(IOException::class)
-    private fun rejectFile(header: FileHeader, name: String, reason: String, cancel: CancelToken) {
-        discardFile(header, cancel)
-        events.onFileFinished(header.index, name, FileState.FAILED, reason, null)
-        FrameIO.write(output, FileAck(header.index, false, reason).toFrame())
-    }
-
-    /** Reads and drops the bytes of a file that is not stored, plus its FILE_END frame. */
-    @Throws(IOException::class)
-    private fun discardFile(header: FileHeader, cancel: CancelToken) {
-        socket.soTimeout = tuning.stallTimeoutMs
         try {
-            val buffer = ByteArray(minOf(64L * 1024, maxOf(header.size, 1L)).toInt())
-            var remaining = header.size
-            while (remaining > 0) {
-                cancel.throwIfCancelled()
-                val want = minOf(buffer.size.toLong(), remaining).toInt()
-                val n = FrameIO.readUpTo(input, buffer, want)
-                if (n < want) {
-                    throw EOFException("Connection lost while receiving \"${header.name}\"")
-                }
-                remaining -= n
-                batchBytes += n
-            }
-            FileEnd.parse(FrameIO.read(input))
-        } finally {
-            socket.soTimeout = 0
+            // The checksum must cover what is already stored; read it before accepting the resume.
+            incoming.feedStoredBytes(prefix)
+        } catch (_: Exception) {
+            incoming.discard()
+            refuse(header, name, "The stored part of this file was damaged - it starts again on the next try")
+            return
         }
+        receiveInto(incoming, header, name, prefix, cancel)
+    }
+
+    /** The sender learns the reason before it sends a single byte of this file. */
+    @Throws(IOException::class)
+    private fun refuse(header: FileHeader, name: String, reason: String) {
+        events.onFileStarted(header.index, name, header.size)
+        events.onFileFinished(header.index, name, FileState.FAILED, reason, null)
+        write(FileStart(header.index, 0, 0L, reason).toFrame())
     }
 
     @Throws(IOException::class)
-    private fun receiveInto(handle: SinkHandle, header: FileHeader, name: String, cancel: CancelToken) {
-        var handleOpen = true
-        var writeError: IOException? = null
+    private fun receiveInto(incoming: IncomingFile, header: FileHeader, name: String, prefix: CRC32, cancel: CancelToken) {
+        var open = true
         var reported = false
+
+        // Ends this file with a failure. The partial data is kept (resumable) or thrown away (damaged).
+        fun finish(message: String, keepPartial: Boolean) {
+            if (keepPartial) {
+                incoming.suspend()
+            } else {
+                incoming.discard()
+            }
+            open = false
+            reported = true
+            events.onFileFinished(header.index, name, FileState.FAILED, message, null)
+            write(FileAck(header.index, false, message).toFrame())
+        }
+
         try {
+            val offset = incoming.offset
+            events.onFileStarted(header.index, name, header.size)
+            val newBytes = header.size - offset
+            val crc = CRC32() // covers only the bytes received now; the stored part is in [prefix]
+            write(FileStart(header.index, offset, prefix.value, "").toFrame())
+            batchBytes += offset // stored bytes count as received
+
             socket.soTimeout = tuning.stallTimeoutMs
-            val crc = CRC32()
-            var remaining = header.size
-            var received = 0L
+            var remaining = newBytes
+            var received = offset
+            var storageError: IOException? = null
             ChunkPipe.run(
                 pool = pool,
-                expectedBytes = header.size,
+                expectedBytes = remaining,
                 cancel = cancel,
                 threadName = "wfp2p-net-read",
                 producer = { chunk ->
@@ -187,14 +227,12 @@ class ReceiverSession(
                 },
                 consumer = { chunk ->
                     crc.update(chunk.data, 0, chunk.length)
-                    if (writeError == null) {
+                    if (storageError == null) {
                         try {
-                            handle.stream.write(chunk.data, 0, chunk.length)
+                            incoming.stream.write(chunk.data, 0, chunk.length)
                         } catch (e: IOException) {
-                            // e.g. the storage is full: stop writing, but keep reading so the stream stays in sync
-                            writeError = e
-                            abortHandle(handle)
-                            handleOpen = false
+                            // e.g. the storage is full: stop writing, keep reading so the stream stays in sync
+                            storageError = e
                         }
                     }
                     received += chunk.length
@@ -202,60 +240,49 @@ class ReceiverSession(
                     emit(header.index, name, received, header.size, force = false)
                 }
             )
-            if (writeError == null) {
-                try {
-                    handle.stream.flush()
-                } catch (e: IOException) {
-                    writeError = e
-                    abortHandle(handle)
-                    handleOpen = false
-                }
-            }
             emit(header.index, name, received, header.size, force = true)
             val end = FileEnd.parse(FrameIO.read(input))
-            socket.soTimeout = 0
+            socket.soTimeout = tuning.deadAfterMs.toInt()
 
             // All bytes of this file are consumed, so the stream is in sync: nothing below ends the connection.
-            val storageProblem = writeError
-            var failure: String? = when {
-                storageProblem != null -> "Cannot save file: ${describeError(storageProblem)}"
-                end.incomplete -> "The file was incomplete on the sending phone (it changed or could not be read)"
-                end.crc32 != crc.value -> "Checksum mismatch - the file was damaged in transit"
-                else -> null
-            }
-            var location: String? = null
-            if (failure == null) {
-                try {
-                    location = handle.commit()
-                    handleOpen = false
-                } catch (e: Exception) {
-                    failure = "Cannot save file: ${describeError(e)}"
+            val storage = storageError
+            when {
+                end.incomplete -> {
+                    finish("The file was incomplete on the sending phone (it changed or could not be read)", keepPartial = false)
+                    return
+                }
+
+                end.crc32 != Crc32Combine.combine(prefix.value, crc.value, newBytes) -> {
+                    finish("Checksum mismatch - the partial data was removed, the next send starts again", keepPartial = false)
+                    return
+                }
+
+                storage != null -> {
+                    finish("Cannot save file: ${describeError(storage)}", keepPartial = true)
+                    return
                 }
             }
-            if (failure != null) {
-                if (handleOpen) {
-                    abortHandle(handle)
-                    handleOpen = false
-                }
-                reported = true
-                events.onFileFinished(header.index, name, FileState.FAILED, failure, null)
-                FrameIO.write(output, FileAck(header.index, false, failure).toFrame())
+            val location = try {
+                incoming.stream.flush()
+                incoming.commit()
+            } catch (e: Exception) {
+                finish("Cannot save file: ${describeError(e)}", keepPartial = true)
                 return
             }
+            open = false
             reported = true
             events.onFileFinished(header.index, name, FileState.DONE, null, location)
-            FrameIO.write(output, FileAck(header.index, true, "").toFrame())
+            write(FileAck(header.index, true, "").toFrame())
         } catch (t: Throwable) {
-            // the connection is gone (or was cancelled): never keep a partial file
-            if (handleOpen) {
-                abortHandle(handle)
-                handleOpen = false
+            // A broken connection keeps the partial data: the sender continues from it later.
+            if (open) {
+                incoming.suspend()
             }
             if (!reported) {
                 val cancelled = t is CancelledException || cancel.cancelled
                 events.onFileFinished(
                     header.index, name,
-                    if (cancelled) FileState.CANCELLED else FileState.FAILED,
+                    if (cancelled) FileState.CANCELLED else FileState.INTERRUPTED,
                     describeError(t), null
                 )
             }
@@ -263,18 +290,6 @@ class ReceiverSession(
                 throw t
             }
             throw IOException(describeError(t), t)
-        } finally {
-            try {
-                socket.soTimeout = 0
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    private fun abortHandle(handle: SinkHandle) {
-        try {
-            handle.abort()
-        } catch (_: Exception) {
         }
     }
 }

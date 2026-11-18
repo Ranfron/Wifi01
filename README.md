@@ -23,6 +23,28 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
 | Path traversal possible through the received file name | File names are sanitised, duplicates get "(1)", "(2)"... |
 | `serverSocket.reuseAddress` set after `bind()` (no effect) | Set before bind, plus bind retry |
 
+## Connection reliability, resume and history
+
+* **Heartbeats**: an idle or busy phone sends a small heartbeat every 2 s. Silence for 10 s means the other phone is gone,
+  and the connection is closed at once instead of waiting minutes for the network stack.
+* **Automatic reconnect**: both channels reconnect with exponential backoff and jitter (0.4 s up to 4 s). After a QR join
+  the app joins the same network again by itself; after a search it looks for the same device again.
+* **Resume**: a file that stops early (a call, a Wi-Fi drop, a full disk) keeps its stored bytes on the receiving phone.
+  When the phones meet again the sender continues from that byte. Each file is checked end to end with CRC-32 (the stored
+  part is verified by CRC combination, so nothing is read twice).
+* **Automatic continuation**: a file that was interrupted by a broken link continues by itself once the link is back.
+  Files that failed for another reason (storage full, refused) wait for a manual *Resume* in the History screen.
+* **Clean**: unfinished files can be removed on either phone with *Clean*.
+* **Expiry**: unfinished transfers that were not touched for five days are removed when the app is opened.
+  Nothing is cleaned up in the background.
+* **History**: every finished file, sent or received, with state, time and size (last 500 entries).
+
+Storage: unfinished receiving data lives in the app's private folder (`Android/data/.../files/incoming`) until it is
+complete. The finished file is then copied to Downloads/WifiP2P.
+
+Protocol v2 (`FILE_START` carries the resume offset and the stored part's CRC, `HEARTBEAT` frames) is not compatible with
+v1: both phones must run the same version of the app.
+
 ## Build
 
 * **Android Studio**: open this folder, *Build > Build Bundle(s) / APK(s) > Build APK(s)*.
@@ -90,7 +112,7 @@ Only private (local-network) addresses are accepted, so a scanned code can never
 
 ## Tests
 
-`app/src/test` contains about 60 JVM tests (`./gradlew test`) that run the real engine over TCP sockets on localhost:
+`app/src/test` contains about 85 JVM tests (`./gradlew test`) that run the real engine over TCP sockets on localhost:
 bit-exact transfer in both directions and simultaneously, cancel in one direction while the other keeps running,
 corruption detection (a flipped bit is caught and only that file fails), automatic reconnect, partial-file cleanup,
 refused batches (no storage), unreadable files, stalled receiver watchdog, a second phone being refused,

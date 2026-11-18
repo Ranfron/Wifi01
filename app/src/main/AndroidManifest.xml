@@ -68,6 +68,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Unfinished transfers (resume or clean) and the history of finished ones. -->
+        <activity
+            android:name=".ui.HistoryActivity"
+            android:exported="false" />
+
         <!-- Full-screen QR scanner. -->
         <activity
             android:name=".ui.ScanActivity"

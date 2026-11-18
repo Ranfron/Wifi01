@@ -106,6 +106,12 @@ class TransferAdapter(
                 info = item.message ?: context.getString(R.string.state_failed)
             }
 
+            FileState.INTERRUPTED -> {
+                icon = R.drawable.ic_schedule
+                color = R.color.status_neutral
+                info = context.getString(R.string.state_interrupted)
+            }
+
             FileState.CANCELLED -> {
                 icon = R.drawable.ic_close
                 color = R.color.status_neutral

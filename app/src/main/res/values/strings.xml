@@ -143,4 +143,32 @@ Received files are saved in Downloads/WifiP2P.</string>
         <item quantity="other">%d files waiting to be sent</item>
     </plurals>
     <string name="share_label">Send with WifiP2P</string>
+    <string name="msg_source_gone">The file is no longer available: %1$s</string>
+    <string name="msg_resume_waiting">Will resume as soon as the phones are connected.</string>
+    <string name="msg_interrupted_continues">%1$d file(s) interrupted - they continue by themselves when the phones reconnect.</string>
+    <string name="msg_interrupted_partial">%1$d file(s) stopped early - their stored part is kept and can resume.</string>
+    <string name="msg_interrupted_will_continue">Connection lost - the transfer continues when the phones reconnect.</string>
+    <string name="msg_reconnecting">Connection lost. Reconnecting…</string>
+    <string name="msg_rejoin_failed">Could not reconnect. Scan the QR code again.</string>
+    <string name="msg_expired_removed">%1$d unfinished transfer(s) older than five days were removed.</string>
+    <string name="state_interrupted">Interrupted - continues by itself</string>
+    <string name="state_done_short">Done</string>
+    <string name="history_button">History and unfinished files</string>
+    <string name="history_title">History</string>
+    <string name="tab_unfinished">Unfinished</string>
+    <string name="tab_history">History</string>
+    <string name="tab_unfinished_count">Unfinished (%1$d)</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_clean">Clean</string>
+    <string name="action_open">Open</string>
+    <string name="clear_history">Clear history</string>
+    <string name="unfinished_empty">No unfinished files.\nFiles that stop early appear here and can be resumed or cleaned.</string>
+    <string name="history_empty">Finished transfers appear here.</string>
+    <string name="history_sent">Sent</string>
+    <string name="history_received">Received</string>
+    <string name="row_info_outgoing">Sending from here • %1$s • %2$s</string>
+    <string name="row_info_incoming">Partly received • %1$s of %2$s • %3$s</string>
+    <string name="row_expires_days">expires in %1$d days</string>
+    <string name="row_expires_today">expires today</string>
+    <string name="msg_resume_queued">Resume queued - it starts when the phones are connected.</string>
 </resources>

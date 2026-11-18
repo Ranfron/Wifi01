@@ -28,12 +28,16 @@ internal fun describeError(t: Throwable): String {
 
 /**
  * Sender half of one TCP connection. Long-lived: after [start] any number of batches can be sent
- * with [sendBatch]. A background reader notices immediately when the other side goes away.
+ * with [sendBatch].
  *
- * Two kinds of failure are told apart:
- *  - a problem with ONE file (unreadable source, a source shorter than announced, refused by the
- *    receiver) fails only that file - the connection stays up and the next file goes out on it;
- *  - a broken connection (socket error, protocol violation, stalled receiver) ends the session.
+ * Connection health:
+ *  - a heartbeat thread keeps the other side informed while idle,
+ *  - the other side's heartbeats are watched: silence for [Tuning.deadAfterMs] means "dead", and the
+ *    connection is closed at once instead of waiting minutes for the TCP stack to notice.
+ *
+ * Failures are classified:
+ *  - a problem with ONE file (unreadable, refused, damaged) fails only that file;
+ *  - a broken connection marks the unfinished files INTERRUPTED: they continue on the next link.
  */
 class SenderSession(
     private val socket: Socket,
@@ -45,25 +49,37 @@ class SenderSession(
     private val output: OutputStream = socket.getOutputStream()
     private val pool = ChunkPool(tuning.chunkSize, tuning.queueDepth)
 
-    // Frames from the receiver (BATCH_REPLY, FILE_ACK) or the CLOSED marker.
+    /** Every write to the socket goes through this lock, so frames and raw data never interleave. */
+    private val writeLock = Any()
+
+    // Frames from the receiver (BATCH_REPLY, FILE_START, FILE_ACK) or the CLOSED marker.
     private val inbox = LinkedBlockingQueue<Any>()
     private val closeLatch = CountDownLatch(1)
     private val closed = AtomicBoolean(false)
-    private val lastActivityNanos = AtomicLong(System.nanoTime())
+    private val lastInbound = AtomicLong(System.nanoTime())
+    private val lastProgress = AtomicLong(System.nanoTime())
 
-    // Held while a batch is running, so "the connection closed" can wait until the batch has
-    // reported the precise reason of every failed file (see awaitIdle).
+    // Held while a batch runs, so "the connection closed" can wait until the batch has reported
+    // the precise reason of every file (see awaitIdle).
     private val batchLock = ReentrantLock()
 
     @Volatile
     private var transferring = false
 
+    /** True from a FILE header until its FILE_END: no heartbeat may appear inside that span (guarded by writeLock). */
+    private var fileInProgress = false
+
+    /** Why this side closed the connection on purpose (silence, stall), if it did. */
+    @Volatile
+    private var closeReason: String? = null
+
     val isClosed: Boolean
         get() = closed.get()
 
-    /** Starts the background reader and the stall watchdog. The HELLO exchange is already done. */
+    /** Starts the reader, the heartbeat and the health watchdog. The HELLO exchange is already done. */
     fun start() {
         startReader()
+        startHeartbeat()
         startWatchdog()
     }
 
@@ -92,49 +108,86 @@ class SenderSession(
         }
     }
 
-    private fun startReader() {
+    private fun closeBecause(reason: String) {
+        if (closeReason == null) {
+            closeReason = reason
+        }
+        close()
+    }
+
+    private fun write(frame: Frame) {
+        synchronized(writeLock) {
+            FrameIO.write(output, frame)
+        }
+    }
+
+    private fun startThread(name: String, body: () -> Unit) {
         val thread = Thread({
             try {
+                body()
+            } catch (_: Throwable) {
+            }
+        }, name)
+        thread.isDaemon = true
+        thread.start()
+    }
+
+    private fun startReader() {
+        startThread("wfp2p-sender-reader") {
+            try {
                 while (true) {
-                    inbox.put(FrameIO.read(input))
+                    val frame = FrameIO.read(input)
+                    lastInbound.set(System.nanoTime())
+                    if (frame.type != Protocol.TYPE_HEARTBEAT) {
+                        inbox.put(frame)
+                    }
                 }
             } catch (_: Throwable) {
-                // connection closed or broken - handled through the CLOSED marker below
+                // connection closed or broken - reported through the CLOSED marker below
             } finally {
                 inbox.offer(CLOSED)
                 closeLatch.countDown()
             }
-        }, "wfp2p-sender-reader")
-        thread.isDaemon = true
-        thread.start()
+        }
     }
 
-    /**
-     * Blocking socket writes have no timeout in Java, so a receiver that silently stops reading
-     * would freeze the sender forever. This watchdog closes the socket when a running transfer
-     * makes no progress for [Tuning.stallTimeoutMs].
-     */
-    private fun startWatchdog() {
-        val thread = Thread({
+    private fun startHeartbeat() {
+        startThread("wfp2p-sender-heartbeat") {
             try {
                 while (!closed.get()) {
-                    Thread.sleep(500)
-                    if (transferring) {
-                        val idleMs = (System.nanoTime() - lastActivityNanos.get()) / 1_000_000
-                        if (idleMs > tuning.stallTimeoutMs) {
-                            close()
+                    Thread.sleep(tuning.heartbeatIntervalMs)
+                    if (!closed.get()) {
+                        synchronized(writeLock) {
+                            if (!fileInProgress) {
+                                FrameIO.write(output, Heartbeat.frame())
+                            }
                         }
                     }
                 }
-            } catch (_: InterruptedException) {
+            } catch (_: Throwable) {
+                closeBecause("Connection lost")
             }
-        }, "wfp2p-sender-watchdog")
-        thread.isDaemon = true
-        thread.start()
+        }
     }
 
+    private fun startWatchdog() {
+        startThread("wfp2p-sender-watchdog") {
+            while (!closed.get()) {
+                Thread.sleep(250)
+                val now = System.nanoTime()
+                if (millisSince(lastInbound, now) > tuning.deadAfterMs) {
+                    closeBecause("The other phone stopped responding")
+                } else if (transferring && millisSince(lastProgress, now) > tuning.stallTimeoutMs) {
+                    closeBecause("The transfer stalled")
+                }
+            }
+        }
+    }
+
+    private fun millisSince(at: AtomicLong, now: Long): Long = (now - at.get()) / 1_000_000
+
     private fun touch() {
-        lastActivityNanos.set(System.nanoTime())
+        lastProgress.set(System.nanoTime())
     }
 
     @Throws(IOException::class)
@@ -180,7 +233,6 @@ class SenderSession(
     /**
      * Sends all [sources]. Never throws: every file gets exactly one
      * [SessionEvents.onFileFinished] callback and the returned [BatchResult] summarises the batch.
-     * After a fatal error (connection lost, cancelled) the session closes itself.
      */
     fun sendBatch(sources: List<SendSource>, cancel: CancelToken): BatchResult {
         batchLock.lock()
@@ -199,7 +251,7 @@ class SenderSession(
         var failed = 0
         var index = 0
         try {
-            FrameIO.write(output, BatchInfo(sources.size, total).toFrame())
+            write(BatchInfo(sources.size, total).toFrame())
             val reply = BatchReply.parse(awaitFrame(Protocol.TYPE_BATCH_REPLY, tuning.ackTimeoutMs, cancel))
             if (!reply.accepted) {
                 throw RejectedException(reply.message.ifEmpty { "The receiver refused the files" })
@@ -212,16 +264,20 @@ class SenderSession(
                 }
                 index++
             }
-            FrameIO.write(output, Frame(Protocol.TYPE_BATCH_END))
+            write(Frame(Protocol.TYPE_BATCH_END))
             return BatchResult(done, failed, 0, null)
         } catch (t: Throwable) {
-            val wasCancelled = cancel.cancelled || t is CancelledException
-            val message = if (wasCancelled || t is RejectedException) {
-                describeError(t)
-            } else {
-                receiverExplanation() ?: describeError(t)
+            val cancelled = cancel.cancelled || t is CancelledException
+            val state = when {
+                cancelled -> FileState.CANCELLED
+                t is RejectedException || t is ProtocolException -> FileState.FAILED
+                t is IOException -> FileState.INTERRUPTED // the link broke: the files continue later
+                else -> FileState.FAILED
             }
-            val state = if (wasCancelled) FileState.CANCELLED else FileState.FAILED
+            val message = when {
+                cancelled || t is RejectedException -> describeError(t)
+                else -> closeReason ?: receiverExplanation() ?: describeError(t)
+            }
             for (i in index until sources.size) {
                 events.onFileFinished(i, sources[i].name, state, message, null)
             }
@@ -229,7 +285,7 @@ class SenderSession(
             if (t !is RejectedException) {
                 close() // the byte stream may be in the middle of a file - it cannot be reused
             }
-            return if (wasCancelled) {
+            return if (cancelled) {
                 BatchResult(done, failed, unfinished, message)
             } else {
                 BatchResult(done, failed + unfinished, 0, message)
@@ -242,7 +298,7 @@ class SenderSession(
 
     /**
      * When the receiver gives up it sends a FILE_ACK(false, reason) right before hanging up.
-     * It is more useful to show that reason than a generic "Broken pipe".
+     * That reason is more useful than a generic "Broken pipe".
      */
     private fun receiverExplanation(): String? {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(400)
@@ -266,6 +322,23 @@ class SenderSession(
         return null
     }
 
+    /** Skips [bytes] of [stream] cheaply where possible. Returns how many bytes were really skipped. */
+    private fun skipExact(stream: InputStream, bytes: Long): Long {
+        var left = bytes
+        while (left > 0) {
+            val skipped = stream.skip(left)
+            if (skipped > 0) {
+                left -= skipped
+                continue
+            }
+            if (stream.read() < 0) {
+                break // the source is shorter than the receiver believes
+            }
+            left--
+        }
+        return bytes - left
+    }
+
     /**
      * Sends one file. Returns DONE or FAILED for problems that leave the connection usable; only
      * socket and protocol errors are thrown, because they end the session.
@@ -273,72 +346,109 @@ class SenderSession(
     @Throws(Exception::class)
     private fun sendOne(index: Int, source: SendSource, cancel: CancelToken, tracker: Tracker): FileState {
         events.onFileStarted(index, source.name, source.size)
-        val stream: InputStream
-        try {
-            stream = source.open()
+        val key = source.key.ifEmpty { "${source.name}|${source.size}|${source.lastModified}" }
+
+        // Opened before anything is announced: an unreadable file costs nothing on the wire.
+        val stream: InputStream = try {
+            source.open()
         } catch (e: Exception) {
-            // nothing has been announced to the receiver yet, so the stream is still in sync
             events.onFileFinished(index, source.name, FileState.FAILED, "Cannot read file: ${describeError(e)}", null)
             return FileState.FAILED
         }
         try {
-            FrameIO.write(
-                output,
-                FileHeader(index, source.name, source.size, source.mimeType, source.lastModified).toFrame()
-            )
+            synchronized(writeLock) {
+                fileInProgress = true
+                FrameIO.write(
+                    output,
+                    FileHeader(index, source.name, source.size, source.mimeType, source.lastModified, key).toFrame()
+                )
+            }
+            val start = FileStart.parse(awaitFrame(Protocol.TYPE_FILE_START, tuning.ackTimeoutMs, cancel))
+            if (start.index != index) {
+                throw ProtocolException("Out-of-order file start")
+            }
+            if (!start.accepted) {
+                events.onFileFinished(index, source.name, FileState.FAILED, start.refusal, null)
+                return FileState.FAILED
+            }
+            if (start.offset > source.size) {
+                throw ProtocolException("Invalid resume offset")
+            }
+            val offset = start.offset
+            val toSend = source.size - offset
             val crc = CRC32()
-            var produced = 0L
-            var sent = 0L
-            var sourceDone = false
             var incomplete = false
+
+            // Resume: continue after the bytes the receiver already stores. Their checksum comes from the
+            // receiver (start.prefixCrc), so nothing is read twice.
+            val skipped = try {
+                skipExact(stream, offset)
+            } catch (_: Exception) {
+                -1L
+            }
+            if (skipped < offset) {
+                incomplete = true
+            }
+
+            var sourceDone = incomplete
+            var produced = 0L
+            var sent = offset
+            tracker.batchBytes += offset // the bytes the receiver already has count as done
             transferring = true
             touch()
-            ChunkPipe.run(
-                pool = pool,
-                expectedBytes = source.size,
-                cancel = cancel,
-                threadName = "wfp2p-read",
-                producer = { chunk ->
-                    val remaining = source.size - produced
-                    if (remaining <= 0) {
-                        false
-                    } else {
-                        val want = minOf(chunk.data.size.toLong(), remaining).toInt()
-                        var got = 0
-                        if (!sourceDone) {
-                            got = try {
-                                FrameIO.readUpTo(stream, chunk.data, want)
-                            } catch (_: Exception) {
-                                0 // the provider failed mid-way: treated like a short file below
+            synchronized(writeLock) {
+                ChunkPipe.run(
+                    pool = pool,
+                    expectedBytes = toSend,
+                    cancel = cancel,
+                    threadName = "wfp2p-read",
+                    producer = { chunk ->
+                        val remaining = toSend - produced
+                        if (remaining <= 0) {
+                            false
+                        } else {
+                            val want = minOf(chunk.data.size.toLong(), remaining).toInt()
+                            var got = 0
+                            if (!sourceDone) {
+                                got = try {
+                                    FrameIO.readUpTo(stream, chunk.data, want)
+                                } catch (_: Exception) {
+                                    -1
+                                }
+                                if (got < want) {
+                                    sourceDone = true
+                                    incomplete = true
+                                    got = maxOf(got, 0)
+                                }
                             }
+                            // What the source could not deliver is padded with zeros: the receiver drops the
+                            // file (it is flagged incomplete) but the stream stays in sync.
                             if (got < want) {
-                                sourceDone = true
-                                incomplete = true
+                                Arrays.fill(chunk.data, got, want, 0.toByte())
                             }
+                            crc.update(chunk.data, 0, want)
+                            chunk.length = want
+                            produced += want
+                            true
                         }
-                        // The receiver expects exactly `size` bytes. What the source could not deliver is
-                        // padded with zeros: the file is marked incomplete and dropped on the other side,
-                        // but the connection carries on with the next file instead of being torn down.
-                        if (got < want) {
-                            Arrays.fill(chunk.data, got, want, 0.toByte())
-                        }
-                        crc.update(chunk.data, 0, want)
-                        chunk.length = want
-                        produced += want
-                        true
+                    },
+                    consumer = { chunk ->
+                        output.write(chunk.data, 0, chunk.length)
+                        sent += chunk.length
+                        tracker.batchBytes += chunk.length
+                        touch()
+                        tracker.emit(index, source.name, sent, source.size, force = false)
                     }
-                },
-                consumer = { chunk ->
-                    output.write(chunk.data, 0, chunk.length)
-                    sent += chunk.length
-                    tracker.batchBytes += chunk.length
-                    touch()
-                    tracker.emit(index, source.name, sent, source.size, force = false)
-                }
-            )
+                )
+            }
             transferring = false
             tracker.emit(index, source.name, sent, source.size, force = true)
-            FrameIO.write(output, FileEnd(crc.value, incomplete).toFrame())
+            // The checksum of the WHOLE file: the receiver's stored part combined with the bytes sent now.
+            val wholeCrc = Crc32Combine.combine(start.prefixCrc, crc.value, toSend)
+            synchronized(writeLock) {
+                FrameIO.write(output, FileEnd(wholeCrc, incomplete).toFrame())
+                fileInProgress = false
+            }
             val ack = FileAck.parse(awaitFrame(Protocol.TYPE_FILE_ACK, tuning.ackTimeoutMs, cancel))
             if (ack.index != index) {
                 throw ProtocolException("Out-of-order acknowledgement")
@@ -356,6 +466,9 @@ class SenderSession(
             return FileState.FAILED
         } finally {
             transferring = false
+            synchronized(writeLock) {
+                fileInProgress = false
+            }
             try {
                 stream.close()
             } catch (_: Exception) {

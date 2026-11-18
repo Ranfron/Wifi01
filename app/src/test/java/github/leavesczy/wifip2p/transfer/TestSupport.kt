@@ -3,7 +3,6 @@ package github.leavesczy.wifip2p.transfer
 import java.io.ByteArrayInputStream
 import java.io.Closeable
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -12,6 +11,7 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.util.Random
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.zip.CRC32
 
 /** Deterministic pseudo-random file content that is generated on the fly (no disk needed). */
 class RandomSource(
@@ -19,7 +19,8 @@ class RandomSource(
     override val size: Long,
     private val seed: Long = name.hashCode().toLong(),
     private val throttleBytesPerSecond: Long = 0,
-    private val failOpen: Boolean = false
+    private val failOpen: Boolean = false,
+    override val key: String = ""
 ) : SendSource {
     override val mimeType: String = "application/octet-stream"
     override val lastModified: Long = 0
@@ -59,18 +60,14 @@ class RandomSource(
         }
     }
 
-    fun sha256(): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        open().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val n = input.read(buffer)
-                if (n < 0) break
-                digest.update(buffer, 0, n)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
+    fun sha256(): String = sha256(open())
+}
+
+/** Declares [size] bytes but can only deliver [actual] - like a provider that reports the wrong size. */
+class ShortSource(override val name: String, override val size: Long, private val actual: Long) : SendSource {
+    override val mimeType: String = "application/octet-stream"
+    override val lastModified: Long = 0
+    override fun open(): InputStream = RandomSource(name, actual).open()
 }
 
 class MemorySource(override val name: String, private val bytes: ByteArray) : SendSource {
@@ -80,76 +77,99 @@ class MemorySource(override val name: String, private val bytes: ByteArray) : Se
     override fun open(): InputStream = ByteArrayInputStream(bytes)
 }
 
-fun sha256(file: File): String {
+fun sha256(input: InputStream): String {
     val digest = MessageDigest.getInstance("SHA-256")
-    file.inputStream().use { input ->
+    input.use { stream ->
         val buffer = ByteArray(64 * 1024)
         while (true) {
-            val n = input.read(buffer)
+            val n = stream.read(buffer)
             if (n < 0) break
             digest.update(buffer, 0, n)
         }
     }
-    return digest.digest().joinToString("") { "%02x".format(it) }
+    return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 }
 
-/** Stores received files in a directory. Mirrors the contract of the real Android sink. */
-open class DirSinks(private val dir: File) : SinkFactory {
+fun sha256(file: File): String = sha256(file.inputStream())
+
+/** Copies a complete part file into the "Downloads" folder of a test phone. */
+class TestPublisher(private val dir: File) : Publisher {
+    val committed = CopyOnWriteArrayList<File>()
+
+    override fun publish(part: File, name: String, mimeType: String): String? {
+        dir.mkdirs()
+        val target = File(dir, FileNames.unique(name) { File(dir, it).exists() })
+        part.copyTo(target)
+        committed.add(target)
+        return target.absolutePath
+    }
+}
+
+/**
+ * Real resumable storage, plus knobs to simulate the phone's problems: a full disk, a storage that
+ * refuses the file, or only a limited amount of free space.
+ */
+class ControlledStore(staging: File, publishDir: File) : IncomingStore {
+    val publisher = TestPublisher(publishDir)
+    val inner = FileIncomingStore(staging, publisher)
+
     @Volatile
     var available: Long = Long.MAX_VALUE
 
     @Volatile
-    var failCreate = false
+    var failOpen: String? = null
 
-    val committed = CopyOnWriteArrayList<File>()
+    /** The next [writeFailuresLeft] files fail after [writeFailAfter] bytes of writing. */
+    @Volatile
+    var writeFailuresLeft = 0
 
     @Volatile
-    var abortedCount = 0
+    var writeFailAfter = 0L
 
     override fun availableBytes(): Long = available
 
-    override fun create(name: String, size: Long, mimeType: String, lastModified: Long): SinkHandle {
-        if (failCreate) {
-            throw IOException("disk full")
+    override fun open(key: String, name: String, size: Long, mimeType: String, lastModified: Long): IncomingFile {
+        failOpen?.let { throw IOException(it) }
+        val real = inner.open(key, name, size, mimeType, lastModified)
+        val failing = writeFailuresLeft > 0
+        if (failing) {
+            writeFailuresLeft--
         }
-        val unique = FileNames.unique(name) { File(dir, it).exists() }
-        val file = File(dir, unique)
-        val out = FileOutputStream(file)
-        return object : SinkHandle {
-            override val stream: OutputStream = out
-
-            override fun commit(): String? {
-                out.close()
-                committed.add(file)
-                return file.absolutePath
-            }
-
-            override fun abort() {
-                try {
-                    out.close()
-                } catch (_: Exception) {
-                }
-                file.delete()
-                abortedCount++
-            }
-        }
+        return ControlledFile(real, if (failing) writeFailAfter else -1L)
     }
+
+    fun partials(): List<PartialFile> = inner.partials()
 }
 
-/** Discards everything (used for throughput measurements). */
-class NullSinks : SinkFactory {
-    override fun availableBytes(): Long = Long.MAX_VALUE
-    override fun create(name: String, size: Long, mimeType: String, lastModified: Long): SinkHandle {
-        val sink = object : OutputStream() {
-            override fun write(b: Int) {}
-            override fun write(b: ByteArray, off: Int, len: Int) {}
+private class ControlledFile(private val real: IncomingFile, private val failAfter: Long) : IncomingFile {
+    override val offset: Long
+        get() = real.offset
+
+    private var written = 0L
+
+    override val stream: OutputStream = object : OutputStream() {
+        override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            if (failAfter >= 0 && written + len > failAfter) {
+                throw IOException("No space left on device")
+            }
+            written += len
+            real.stream.write(b, off, len)
         }
-        return object : SinkHandle {
-            override val stream: OutputStream = sink
-            override fun commit(): String? = null
-            override fun abort() {}
-        }
+
+        override fun flush() = real.stream.flush()
+
+        override fun close() = real.stream.close()
     }
+
+    override fun feedStoredBytes(crc: CRC32) = real.feedStoredBytes(crc)
+
+    override fun commit(): String? = real.commit()
+
+    override fun suspend() = real.suspend()
+
+    override fun discard() = real.discard()
 }
 
 class FinishedFile(
@@ -200,7 +220,15 @@ class RecordingEvents : SessionEvents {
     fun summary(): String = finished.map { it.name + ":" + it.state + ":" + it.message }.toString()
 
     fun awaitFinished(count: Int, timeoutMs: Long = 30_000) {
-        awaitCondition("$count finished files (have ${finished.size})", timeoutMs, { summary() }) { finished.size >= count }
+        awaitCondition("$count finished files (have ${finished.size})", timeoutMs, { summary() }) {
+            finished.size >= count
+        }
+    }
+
+    fun awaitState(name: String, state: FileState, timeoutMs: Long = 30_000) {
+        awaitCondition("$name to become $state", timeoutMs, { summary() }) {
+            finished.any { it.name == name && it.state == state }
+        }
     }
 
     fun await(what: String, timeoutMs: Long, condition: () -> Boolean) {
@@ -242,28 +270,31 @@ class RecordingLink : LinkListener {
         channels.lastOrNull { it.direction == direction && it.ready }?.peer
 
     fun await(what: String, timeoutMs: Long = 10_000, condition: () -> Boolean) {
-        awaitCondition(what, timeoutMs, { channels.map { it.direction.toString() + (if (it.ready) "+" else "-") + it.detail }.toString() }, condition)
+        awaitCondition(what, timeoutMs, {
+            channels.map { it.direction.toString() + (if (it.ready) "+" else "-") + it.detail }.toString()
+        }, condition)
     }
 
-    fun awaitReady(direction: ChannelDirection, count: Int = 1, timeoutMs: Long = 10_000) {
+    fun awaitReady(direction: ChannelDirection, count: Int = 1, timeoutMs: Long = 15_000) {
         await("$direction channel ready #$count", timeoutMs) { readyCount(direction) >= count }
     }
 }
 
-/** One phone of a test: its own storage folder, its own events, its own link. */
-class Phone(val name: String, val dir: File, tuning: Tuning, val sinks: DirSinks = DirSinks(dir)) {
+/** One phone of a test: its own storage (staging + published folder), its own events, its own link. */
+class Phone(val name: String, val dir: File, tuning: Tuning) {
     /** Files this phone sends. */
     val sent = RecordingEvents()
 
     /** Files this phone receives. */
     val received = RecordingEvents()
     val link = RecordingLink()
-    val duplex = DuplexLink(name, tuning, sinks, sent, received, link)
+    val store = ControlledStore(File(dir.parentFile, dir.name + "-staging"), dir)
+    val duplex = DuplexLink(name, tuning, store, sent, received, link)
 }
 
 /**
- * TCP proxy that flips one bit in the client->server stream of EVERY connection at [flipAtByte].
- * Only the connection that carries file data is long enough to be hit (a link has two connections).
+ * TCP proxy that flips one bit in the client->server stream of every connection at [flipAtByte].
+ * Only the connection that carries file data is long enough to be hit.
  */
 class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long) : Closeable {
     private val server = ServerSocket(0)
@@ -296,7 +327,8 @@ class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long)
                     val n = input.read(buffer)
                     if (n < 0) break
                     if (flipAt >= 0 && flipAt >= total && flipAt < total + n) {
-                        buffer[(flipAt - total).toInt()] = (buffer[(flipAt - total).toInt()].toInt() xor 0x01).toByte()
+                        val i = (flipAt - total).toInt()
+                        buffer[i] = (buffer[i].toInt() xor 0x01).toByte()
                     }
                     total += n
                     output.write(buffer, 0, n)
@@ -304,7 +336,10 @@ class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long)
                 }
             } catch (_: Exception) {
             } finally {
-                try { to.shutdownOutput() } catch (_: Exception) {}
+                try {
+                    to.shutdownOutput()
+                } catch (_: Exception) {
+                }
             }
         }
         t.isDaemon = true
@@ -319,45 +354,75 @@ class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long)
     }
 }
 
-fun freePort(): Int = ServerSocket(0).use { it.localPort }
+/** A TCP proxy that can be cut on demand: simulates the Wi-Fi link breaking (a call, a sleeping radio). */
+class CuttableProxy(private val targetPort: Int) : Closeable {
+    private val server = ServerSocket(0)
+    private val pairs = CopyOnWriteArrayList<Pair<Socket, Socket>>()
+    val port: Int get() = server.localPort
 
-/** Declares [size] bytes but can only deliver [actual] - like a provider that reports the wrong size. */
-class ShortSource(override val name: String, override val size: Long, private val actual: Long) : SendSource {
-    override val mimeType: String = "application/octet-stream"
-    override val lastModified: Long = 0
-    override fun open(): InputStream = RandomSource(name, actual).open()
-}
-
-/** Writes fail after [failAfterBytes] for the first [failingFiles] files - like a disk that fills up. */
-class FlakySinks(dir: File, private val failAfterBytes: Long, private val failingFiles: Int) : DirSinks(dir) {
-    private var created = 0
-
-    override fun create(name: String, size: Long, mimeType: String, lastModified: Long): SinkHandle {
-        val inner = super.create(name, size, mimeType, lastModified)
-        val failing = created++ < failingFiles
-        return object : SinkHandle {
-            private var written = 0L
-
-            override val stream: OutputStream = object : OutputStream() {
-                override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
-
-                override fun write(b: ByteArray, off: Int, len: Int) {
-                    if (failing && written + len > failAfterBytes) {
-                        throw IOException("No space left on device")
-                    }
-                    written += len
-                    inner.stream.write(b, off, len)
+    init {
+        val t = Thread {
+            try {
+                while (true) {
+                    val client = server.accept()
+                    val upstream = Socket("127.0.0.1", targetPort)
+                    pairs.add(client to upstream)
+                    relay(client, upstream)
+                    relay(upstream, client)
                 }
-
-                override fun flush() = inner.stream.flush()
-
-                override fun close() = inner.stream.close()
+            } catch (_: Exception) {
             }
+        }
+        t.isDaemon = true
+        t.start()
+    }
 
-            override fun commit(): String? = inner.commit()
+    private fun relay(from: Socket, to: Socket) {
+        val t = Thread {
+            try {
+                val input = from.getInputStream()
+                val output = to.getOutputStream()
+                val buffer = ByteArray(32 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    output.write(buffer, 0, n)
+                    output.flush()
+                }
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    to.shutdownOutput()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        t.isDaemon = true
+        t.start()
+    }
 
-            override fun abort() = inner.abort()
+    /** Breaks every connection that passes through the proxy right now. */
+    fun cutAll() {
+        for ((client, upstream) in pairs) {
+            try {
+                client.close()
+            } catch (_: Exception) {
+            }
+            try {
+                upstream.close()
+            } catch (_: Exception) {
+            }
+        }
+        pairs.clear()
+    }
+
+    override fun close() {
+        cutAll()
+        try {
+            server.close()
+        } catch (_: Exception) {
         }
     }
 }
 
+fun freePort(): Int = ServerSocket(0).use { it.localPort }
