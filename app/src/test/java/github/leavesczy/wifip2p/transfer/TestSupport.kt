@@ -248,6 +248,9 @@ class RecordingLink : LinkListener {
     @Volatile
     var unreachable = 0
 
+    @Volatile
+    var incompatible = 0
+
     override fun onListening() {
         listening = true
     }
@@ -258,6 +261,10 @@ class RecordingLink : LinkListener {
 
     override fun onHostUnreachable() {
         unreachable++
+    }
+
+    override fun onIncompatible() {
+        incompatible++
     }
 
     override fun onFailed(detail: String) {

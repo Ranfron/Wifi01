@@ -34,7 +34,7 @@ object Handshake {
         val guest = Hello.parse(FrameIO.read(socket.getInputStream()))
         val myRole = Protocol.complementOf(guest.role) ?: throw ProtocolException("Invalid role")
         if (!admit()) {
-            throw ProtocolException("Another phone is already connected")
+            throw IOException("Another phone is already connected")
         }
         FrameIO.write(socket.getOutputStream(), Hello(myRole, deviceName).toFrame())
         socket.soTimeout = 0

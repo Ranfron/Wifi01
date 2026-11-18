@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only used on Android 6-9 to hand a received file to a viewer app. -->
+<!-- Lets viewer apps open a received file (the received folder is inside the app's external files folder). -->
 <paths>
-    <external-path
+    <external-files-path
         name="received"
-        path="Download/WifiP2P/" />
+        path="received/" />
 </paths>

@@ -183,6 +183,8 @@ class DuplexLink(
             } else {
                 runSend(socket, guest.deviceName)
             }
+        } catch (_: VersionMismatchException) {
+            tell { onIncompatible() }
         } catch (_: Throwable) {
             // not admitted, bad HELLO, timeout, or the channel simply ended: drop the connection
         } finally {
@@ -203,6 +205,11 @@ class DuplexLink(
                 val myRole = if (direction == ChannelDirection.SEND) Protocol.ROLE_SENDER else Protocol.ROLE_RECEIVER
                 host = Handshake.asGuest(socket, myRole, deviceName, tuning.handshakeTimeoutMs)
                 attempts = 0
+            } catch (_: VersionMismatchException) {
+                closeQuietly(socket)
+                tell { onIncompatible() }
+                sleepQuietly(tuning.reconnectMaxMs) // keep trying: the other phone may be updated later
+                continue
             } catch (_: IOException) {
                 closeQuietly(socket)
                 attempts++

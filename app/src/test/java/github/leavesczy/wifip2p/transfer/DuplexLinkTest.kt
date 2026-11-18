@@ -623,4 +623,17 @@ class DuplexLinkTest {
         assertEquals(FileState.INTERRUPTED, result.state)
         assertTrue("silence should be noticed after ~1.5 s, took $took ms", took in 500..15_000)
     }
+
+    @Test
+    fun anotherBuildOfTheAppIsReportedInsteadOfRetriedSilently() {
+        val port = freePort()
+        val host = phone("Host-Phone")
+        host.duplex.startHost(port)
+        host.link.await("host listening") { host.link.listening }
+        Socket("127.0.0.1", port).use { oldBuild ->
+            FrameIO.write(oldBuild.getOutputStream(), Hello(Protocol.ROLE_SENDER, "old", version = 1).toFrame())
+            host.link.await("mismatch reported", 5_000) { host.link.incompatible > 0 }
+        }
+        assertEquals(0, host.link.readyCount(ChannelDirection.RECEIVE))
+    }
 }

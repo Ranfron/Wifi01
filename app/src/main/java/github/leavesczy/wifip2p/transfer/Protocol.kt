@@ -55,7 +55,10 @@ object Protocol {
     }
 }
 
-class ProtocolException(message: String) : IOException(message)
+open class ProtocolException(message: String) : IOException(message)
+
+/** The two phones run different builds of the app. Reported to the user, not retried silently. */
+class VersionMismatchException(message: String) : ProtocolException(message)
 
 class Frame(val type: Int, val payload: ByteArray = EMPTY) {
     companion object {
@@ -159,7 +162,7 @@ data class Hello(val role: Int, val deviceName: String, val version: Int = Proto
             }
             val version = it.readUnsignedShort()
             if (version != Protocol.VERSION) {
-                throw ProtocolException("The two phones run different versions of the app - update both")
+                throw VersionMismatchException("The two phones run different versions of the app - update both")
             }
             val role = it.readUnsignedByte()
             Hello(role = role, deviceName = it.readUTF(), version = version)

@@ -16,7 +16,10 @@ import github.leavesczy.wifip2p.p2p.P2pController
 import github.leavesczy.wifip2p.p2p.P2pPeer
 import github.leavesczy.wifip2p.p2p.WifiJoiner
 import github.leavesczy.wifip2p.service.TransferService
+import github.leavesczy.wifip2p.storage.DownloadsPublisher
 import github.leavesczy.wifip2p.storage.UriSendSource
+import github.leavesczy.wifip2p.storage.guessMimeType
+import java.io.File
 import github.leavesczy.wifip2p.transfer.ChannelDirection
 import github.leavesczy.wifip2p.transfer.ConnectCode
 import github.leavesczy.wifip2p.transfer.DuplexLink
@@ -95,6 +98,7 @@ class TransferHub(
     private val lock = Any()
 
     private val tuning = Tuning()
+    private val exporter = DownloadsPublisher(app)
 
     // ---- session facts. Derived into the UI state by publish() -----------------------------------
     private var p2p: P2pController? = null
@@ -150,6 +154,7 @@ class TransferHub(
     private var lastQrText: String? = null
     private var rejoinAttempts = 0
     private var lastPeerAddress: String? = null
+    private var pendingPeerName: String? = null
     private var autoReconnectAttempts = 0
 
     private val ensureGroupRunnable = Runnable { ensureHostGroup() }
@@ -197,6 +202,7 @@ class TransferHub(
             fastMode = Settings.fastMode(app),
             pendingShare = pendingShareCount()
         )
+        log("Session started as $newRole")
         startService()
         val controller = P2pController(app, p2pListener)
         p2p = controller
@@ -289,7 +295,11 @@ class TransferHub(
             return
         }
         if (Build.VERSION.SDK_INT < 29) {
-            postMessage(app.getString(R.string.msg_qr_needs_android10))
+            // Android 9 and older cannot join a network from a QR code: connect to the phone named in it instead.
+            pendingPeerName = code.deviceName.takeIf { it.isNotBlank() }
+            postMessage(app.getString(R.string.msg_qr_search_instead))
+            log("QR read on Android ${Build.VERSION.RELEASE}: searching for \"${code.deviceName}\"")
+            discoverPeers()
             return
         }
         if (p2pEnabled == false) {
@@ -298,7 +308,10 @@ class TransferHub(
         }
         lastQrText = text
         cancelConnectTimeout()
-        stopLink()
+        if (linkKey != "qr:" + code.address) {
+            stopLink()
+        }
+        log("Joining network ${code.ssid}")
         joiner?.leave()
         errorText = null
         joinMethod = JoinMethod.QR
@@ -314,11 +327,13 @@ class TransferHub(
     private val joinerListener = object : WifiJoiner.Listener {
         override fun onJoined() {
             val code = qrTarget ?: return
+            log("Joined the host network")
             startLink(host = false, address = code.address, key = "qr:" + code.address, source = LinkSource.QR)
             publish()
         }
 
         override fun onJoinFailed() {
+            log("Could not join the host network")
             joiner?.leave()
             resetJoinFacts()
             postMessage(app.getString(R.string.msg_join_failed))
@@ -326,10 +341,8 @@ class TransferHub(
         }
 
         override fun onLost() {
-            if (linkSource == LinkSource.QR) {
-                stopLink()
-                abortAll(null)
-            }
+            // The link keeps retrying by itself when the network comes back. Only the join is repeated.
+            log("Host network lost - joining again")
             resetJoinFacts()
             postMessage(app.getString(R.string.msg_wifi_lost))
             scheduleRejoin()
@@ -523,6 +536,28 @@ class TransferHub(
     fun cleanIncoming(key: String) {
         worker.execute {
             incoming.discard(key)
+        }
+    }
+
+    /**
+     * Copies a received file into Downloads/WifiP2P. This is an explicit choice: the copy needs room for the
+     * whole file again, so the free space is checked first and the original is always kept.
+     */
+    fun exportToDownloads(location: String, name: String, onResult: (String) -> Unit) {
+        worker.execute {
+            val file = File(location)
+            val text = when {
+                !file.isFile -> app.getString(R.string.msg_export_missing)
+                (file.parentFile?.usableSpace ?: 0L) < file.length() + EXPORT_RESERVE_BYTES ->
+                    app.getString(R.string.msg_export_no_space)
+                else -> try {
+                    exporter.publish(file, name, guessMimeType(name))
+                    app.getString(R.string.msg_exported)
+                } catch (e: Exception) {
+                    app.getString(R.string.msg_export_failed, describeError(e))
+                }
+            }
+            main.post { onResult(text) }
         }
     }
 
@@ -730,6 +765,14 @@ class TransferHub(
                 compareBy<P2pPeer>({ it.status != WifiP2pDevice.AVAILABLE }, { it.name.lowercase() })
             )
             mutableState.update { it.copy(peers = sorted) }
+            // Android 9 and older: the phone named in the QR code is connected to automatically.
+            val wantedName = pendingPeerName
+            if (wantedName != null && connectingTo == null && sessionPeer == null) {
+                sorted.firstOrNull { it.name == wantedName && it.status == WifiP2pDevice.AVAILABLE }?.let {
+                    pendingPeerName = null
+                    connectTo(it)
+                }
+            }
             // Join side, the connection was lost: reconnect to the same device by itself.
             val wanted = lastPeerAddress
             if (mutableState.value.role == Role.JOIN && wanted != null && !groupFormed && connectingTo == null &&
@@ -767,18 +810,18 @@ class TransferHub(
         }
         lastInfo = info
         if (info == null) {
-            groupFormed = false
-            if (linkSource == LinkSource.P2P) {
-                stopLink()
-                abortAll(null)
+            if (groupFormed) {
+                log("Wi-Fi Direct group reported as gone - the link keeps running")
             }
-            // a QR link does not depend on a Wi-Fi Direct group of this phone
+            groupFormed = false
+            // Android reports "no group" for moments that do not mean the phones are apart. Tearing the link down
+            // here made a working connection drop, and rebuilding the group changed the QR code. The group is
+            // only rebuilt when it stays gone.
             updateQr()
             if (role == Role.HOST && !creatingGroup) {
-                // A host without a group is useless: build it again (debounced).
-                scheduleEnsureGroup(1_000)
+                scheduleEnsureGroup(GROUP_GONE_DELAY_MS)
             }
-            if (role == Role.JOIN && lastPeerAddress != null && linkSource != LinkSource.QR) {
+            if (role == Role.JOIN && lastPeerAddress != null && linkSource != LinkSource.QR && sessionPeer == null) {
                 // the group went away: search again, the previous device is reconnected when it shows up
                 main.postDelayed({ if (!groupFormed && sessionPeer == null) discoverPeers() }, 2_000)
             }
@@ -826,7 +869,8 @@ class TransferHub(
 
     private fun ensureHostGroup() {
         val controller = p2p ?: return
-        if (mutableState.value.role != Role.HOST || p2pEnabled != true || groupFormed || creatingGroup) {
+        if (mutableState.value.role != Role.HOST || p2pEnabled != true || groupFormed || creatingGroup ||
+            lastGroup != null) {
             return
         }
         if (groupAttempts >= MAX_GROUP_ATTEMPTS) {
@@ -846,6 +890,7 @@ class TransferHub(
                 return@createGroup // the watchdog already gave up on this attempt
             }
             creatingGroup = false
+            log(if (result.ok) "Group ready (5 GHz: ${result.fiveGhz})" else "Group could not be created (reason ${result.reason})")
             if (result.ok) {
                 mutableState.update { it.copy(fiveGhz = result.fiveGhz) }
                 controller.refresh()
@@ -917,6 +962,7 @@ class TransferHub(
         link = runner
         linkKey = key
         linkSource = source
+        log(if (host || address == null) "Hosting the link on port ${Protocol.PORT}" else "Connecting the link to $address")
         if (host || address == null) {
             runner.startHost(Protocol.PORT)
         } else {
@@ -936,11 +982,17 @@ class TransferHub(
 
     private val linkListener = object : LinkListener {
 
+        override fun onListening() {
+            log("Waiting for the other phone")
+        }
+
         override fun onInternalError(error: Throwable) {
             android.util.Log.e("WifiP2P", "Recovered from an internal error, the connection was kept", error)
         }
 
         override fun onChannel(direction: ChannelDirection, ready: Boolean, peerName: String?, detail: String?) {
+            log((if (direction == ChannelDirection.SEND) "Send" else "Receive") + " channel " +
+                    (if (ready) "up" else "down") + (detail?.let { " - $it" } ?: ""))
             if (direction == ChannelDirection.SEND) {
                 sendReady = ready
             } else {
@@ -985,11 +1037,19 @@ class TransferHub(
             publish()
         }
 
+        override fun onIncompatible() {
+            log("The other phone runs a different build")
+            errorText = app.getString(R.string.error_version_mismatch)
+            publish()
+        }
+
         override fun onHostUnreachable() {
+            log("Host not answering yet - still trying")
             postMessage(app.getString(R.string.msg_unreachable))
         }
 
         override fun onFailed(detail: String) {
+            log("Link failed: $detail")
             sessionPeer = null
             sendReady = false
             receiveReady = false
@@ -1211,6 +1271,22 @@ class TransferHub(
         abortIn(reason)
     }
 
+    private val logLines = ArrayDeque<String>()
+
+    /** A short record of what the connection did, so a failure on a phone can be explained. */
+    private fun log(text: String) {
+        synchronized(lock) {
+            val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+            logLines.addLast("$stamp  $text")
+            while (logLines.size > LOG_CAPACITY) {
+                logLines.removeFirst()
+            }
+        }
+    }
+
+    /** The recent connection events, oldest first. */
+    fun connectionLog(): List<String> = synchronized(lock) { logLines.toList() }
+
     private fun postMessage(text: String) {
         mutableState.update { it.copy(message = UiMessage(messageIds.getAndIncrement(), text)) }
     }
@@ -1293,5 +1369,8 @@ class TransferHub(
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val GROUP_TIMEOUT_MS = 25_000L
         const val EXPIRY_MS = 5L * 24 * 60 * 60 * 1000
+        const val EXPORT_RESERVE_BYTES = 256L * 1024 * 1024
+        const val LOG_CAPACITY = 300
+        const val GROUP_GONE_DELAY_MS = 8_000L
     }
 }

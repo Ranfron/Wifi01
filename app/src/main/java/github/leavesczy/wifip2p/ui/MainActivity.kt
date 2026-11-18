@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.root.applySystemBarPadding()
+        binding.tvVersion.text = getString(R.string.app_version, appVersion())
 
         binding.btnShowQr.setOnClickListener { open(Role.HOST) }
         binding.btnScanQr.setOnClickListener { open(Role.JOIN) }
@@ -112,6 +113,14 @@ class MainActivity : AppCompatActivity() {
             )
             binding.btnLocationSettings.show(locationOff)
         }
+    }
+
+    /** The installed build. Both phones must show the same version to connect. */
+    @Suppress("DEPRECATION")
+    private fun appVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    } catch (_: Exception) {
+        "?"
     }
 
     private fun showCheck(icon: ImageView, label: TextView, ok: Boolean, okText: Int, badText: Int) {

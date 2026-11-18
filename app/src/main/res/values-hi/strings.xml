@@ -14,7 +14,7 @@
     <string name="check_location_off">लोकेशन बंद है। आस-पास के डिवाइस खोजने के लिए Android को इसकी ज़रूरत है।</string>
     <string name="grant">अनुमति दें</string>
     <string name="tips_title">सबसे तेज़ स्पीड के लिए टिप्स</string>
-    <string name="tips">1. पाने वाले फ़ोन में पहले “फ़ाइलें पाएँ” खोलें।\n2. भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, डिवाइस खोजें और पाने वाले फ़ोन पर टैप करें। पाने वाले फ़ोन पर निमंत्रण स्वीकार करें।\n3. किसी भी प्रकार की जितनी चाहें उतनी फ़ाइलें चुनें, या Gallery/Files से सीधे “WifiP2P से भेजें” द्वारा शेयर करें।\n4. दोनों फ़ोन पास रखें (कुछ मीटर के भीतर) और दोनों की स्क्रीन चालू रखें। Android 10+ फ़ोन अपने-आप तेज़ 5 GHz बैंड इस्तेमाल करते हैं।\n5. मिली हुई फ़ाइलें Downloads/WifiP2P में सेव होती हैं।</string>
+    <string name="tips">1. पाने वाले फ़ोन में पहले “फ़ाइलें पाएँ” खोलें।\n2. भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, डिवाइस खोजें और पाने वाले फ़ोन पर टैप करें। पाने वाले फ़ोन पर निमंत्रण स्वीकार करें।\n3. किसी भी प्रकार की जितनी चाहें उतनी फ़ाइलें चुनें, या Gallery/Files से सीधे “WifiP2P से भेजें” द्वारा शेयर करें।\n4. दोनों फ़ोन पास रखें (कुछ मीटर के भीतर) और दोनों की स्क्रीन चालू रखें। Android 10+ फ़ोन अपने-आप तेज़ 5 GHz बैंड इस्तेमाल करते हैं।\n5. मिली हुई फ़ाइलें ऐप में रहती हैं: इतिहास से खोलें या Downloads में कॉपी करें।</string>
 
     <!-- Common -->
     <string name="cancel">रद्द करें</string>
@@ -71,7 +71,6 @@
     <string name="msg_search_failed">खोज विफल: %1$s</string>
     <string name="msg_connect_failed">जुड़ नहीं सका: %1$s</string>
     <string name="msg_connect_timeout">दूसरे फ़ोन ने समय पर स्वीकार नहीं किया। बार-बार ऐसा हो तो पाने वाले फ़ोन को कम्पैटिबिलिटी मोड पर करें।</string>
-    <string name="msg_unreachable">दूसरे फ़ोन का ऐप नहीं मिल रहा। पक्का करें कि वह “फ़ाइलें पाएँ” स्क्रीन पर है।</string>
     <string name="msg_not_connected">किसी रिसीवर से जुड़ा नहीं है।</string>
     <string name="msg_cancelled">रद्द की गई</string>
     <string name="msg_sent_summary">%2$d में से %1$d फ़ाइलें भेजी गईं</string>
@@ -114,7 +113,6 @@
     <string name="label_sending">भेज रहा है</string>
     <string name="msg_join_failed">नेटवर्क से नहीं जुड़ पाए। QR कोड जाँचें और फिर कोशिश करें।</string>
     <string name="msg_qr_invalid">यह WifiP2P का QR कोड नहीं है।</string>
-    <string name="msg_qr_needs_android10">QR कोड स्कैन करने के लिए Android 10 या नया वर्ज़न चाहिए। “फ़ोन खोजें” इस्तेमाल करें।</string>
     <string name="msg_shared_waiting">%1$d फ़ाइल(ें) फ़ोन जुड़ते ही भेजी जाएँगी।</string>
     <string name="msg_wifi_lost">दूसरे फ़ोन से कनेक्शन टूट गया।</string>
     <string name="notification_ready_host">दूसरे फ़ोन के QR कोड स्कैन करने का इंतज़ार</string>
@@ -130,7 +128,7 @@
     <string name="search_phones">फ़ोन खोजें</string>
     <string name="send_waiting">कनेक्शन का इंतज़ार…</string>
     <string name="session_empty">भेजी और पाई गई फ़ाइलें यहाँ दिखेंगी।
-मिली हुई फ़ाइलें Downloads/WifiP2P में सेव होती हैं।</string>
+मिली हुई फ़ाइलें ऐप में रहती हैं: इतिहास से खोलें या Downloads में कॉपी करें।</string>
     <string name="show_qr">QR कोड दिखाएँ</string>
     <string name="show_qr_hint">जिस फ़ोन से कनेक्शन बनेगा उस पर इसे इस्तेमाल करें। दूसरा फ़ोन यह कोड स्कैन करेगा।</string>
     <string name="status_connecting">%1$s से जुड़ रहा है…</string>
@@ -171,4 +169,18 @@
     <string name="row_expires_days">%1$d दिन में हट जाएगी</string>
     <string name="row_expires_today">आज हट जाएगी</string>
     <string name="msg_resume_queued">आगे बढ़ाना तय हुआ - फ़ोन जुड़ते ही शुरू होगा।</string>
+    <string name="app_version">संस्करण %1$s - दोनों फ़ोन पर एक ही संस्करण होना चाहिए</string>
+    <string name="error_version_mismatch">दूसरे फ़ोन पर WifiP2P का अलग संस्करण है। दोनों फ़ोन पर एक ही (नवीनतम) संस्करण इंस्टॉल करें।</string>
+    <string name="action_export">Downloads में कॉपी करें</string>
+    <string name="msg_exported">Downloads/WifiP2P में कॉपी हो गई। मूल फ़ाइल ऐप में ही रहेगी।</string>
+    <string name="msg_export_no_space">Downloads में कॉपी के लिए पर्याप्त जगह नहीं है। फ़ाइल ऐप में रहेगी और यहीं से खुल सकती है।</string>
+    <string name="msg_export_missing">यह फ़ाइल अब फ़ोन पर नहीं है।</string>
+    <string name="msg_export_failed">फ़ाइल कॉपी नहीं हो सकी: %1$s</string>
+    <string name="msg_unreachable">दूसरे फ़ोन तक पहुँचने की कोशिश जारी है। दोनों स्क्रीन खुली रखें। बार-बार न हो तो QR कोड दोबारा स्कैन करें।</string>
+    <string name="msg_qr_search_instead">Android 9 या पुराने फ़ोन QR कोड से सीधे नहीं जुड़ सकते। कोड वाले फ़ोन को खोजा जा रहा है।</string>
+    <string name="connection_log">कनेक्शन लॉग</string>
+    <string name="log_empty">अभी कोई लॉग नहीं।</string>
+    <string name="copy">कॉपी करें</string>
+    <string name="close">बंद करें</string>
+    <string name="log_copied">लॉग कॉपी हो गया।</string>
 </resources>

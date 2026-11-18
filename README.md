@@ -25,8 +25,12 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
 
 ## Connection reliability, resume and history
 
-* **Heartbeats**: an idle or busy phone sends a small heartbeat every 2 s. Silence for 10 s means the other phone is gone,
-  and the connection is closed at once instead of waiting minutes for the network stack.
+* **Heartbeats**: an idle or busy phone sends a small heartbeat every 3 s. Silence for 20 s means the other phone is gone,
+  and the connection is closed instead of waiting minutes for the network stack.
+* **Stable host**: the host keeps its listening socket while Android reports short "no group" moments; the Wi-Fi Direct
+  group is rebuilt only when it stays gone. A rejoin never tears down a link that is already running.
+* **Connection log**: the session screen has a *Connection log* button that lists the recent connection events, with copy.
+* **Android 9 and older**: they cannot join from a QR code; the app searches for the phone named in the code and connects.
 * **Automatic reconnect**: both channels reconnect with exponential backoff and jitter (0.4 s up to 4 s). After a QR join
   the app joins the same network again by itself; after a search it looks for the same device again.
 * **Resume**: a file that stops early (a call, a Wi-Fi drop, a full disk) keeps its stored bytes on the receiving phone.
@@ -39,10 +43,9 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
   Nothing is cleaned up in the background.
 * **History**: every finished file, sent or received, with state, time and size (last 500 entries).
 
-Storage: unfinished receiving data lives in the app's private folder (`Android/data/.../files/incoming`) until it is
-complete. The finished file is then copied to Downloads/WifiP2P.
+Storage: a received file is written once, into the app's `received` folder (`Android/data/.../files/received`). An unfinished file is a hidden `.part` piece there; when it is complete it is renamed in place, so nothing is copied and no extra space is needed. Downloads/WifiP2P gets a copy only when you choose *Export to Downloads* (after a free-space check).
 
-Protocol v2 (`FILE_START` carries the resume offset and the stored part's CRC, `HEARTBEAT` frames) is not compatible with
+Both phones must run the same build (the version is shown on the home screen). Protocol v2 (`FILE_START` carries the resume offset and the stored part's CRC, `HEARTBEAT` frames) is not compatible with
 v1: both phones must run the same version of the app.
 
 ## Build
@@ -64,7 +67,7 @@ Toolchain is unchanged from 1.0 (AGP 9.0.0, Gradle 9.3.1, Kotlin 2.3.10, minSdk 
    The phones are connected. (Fallback without a camera: *Search phones* and tap the other phone, accept the invitation.)
 3. On **either** phone: *Send files* (any number, any type). Or share files from Gallery / Files with
    *Send with WifiP2P* - they wait on the home screen and are sent as soon as the phones are connected.
-4. Both phones see both directions live. Received files are in **Downloads/WifiP2P** and can be tapped to open.
+4. Both phones see both directions live. Received files are in the app's received folder: open them from History, or export a copy to Downloads.
 
 Tips for maximum speed: stay within a few metres, keep both screens on, and use phones with Android 10+ on both sides
 (5 GHz). If an old phone cannot connect to a 5 GHz group, switch the receiver to *compatibility mode* on its screen.

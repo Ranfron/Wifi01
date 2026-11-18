@@ -8,8 +8,8 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import github.leavesczy.wifip2p.R
@@ -28,16 +28,17 @@ data class RecordRow(
     val title: String,
     val info: String,
     val primaryText: Int,
+    val primaryAction: Action,
     val secondaryText: Int,
-    val action: Action,
+    val secondaryAction: Action,
     val location: String?,
     val name: String
 ) {
-    enum class Action { RESUME, CLEAN_OUTGOING, CLEAN_INCOMING, OPEN, NONE }
+    enum class Action { NONE, RESUME, CLEAN_OUTGOING, CLEAN_INCOMING, OPEN, EXPORT }
 }
 
 /**
- * Unfinished transfers and history, from the app's own records. Nothing here runs in the background:
+ * Unfinished transfers and history, read from the app's own records. Nothing runs in the background:
  * the list is read when the screen opens and after every action.
  */
 class HistoryActivity : AppCompatActivity() {
@@ -70,7 +71,7 @@ class HistoryActivity : AppCompatActivity() {
         }
         binding.btnClearHistory.setOnClickListener {
             transferHub().clearHistory()
-            reload()
+            refreshSoon()
         }
     }
 
@@ -86,15 +87,19 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    private fun refreshSoon() {
+        binding.root.postDelayed({ reload() }, 300)
+    }
+
     private fun render() {
         val current = records ?: return
         val now = System.currentTimeMillis()
         binding.btnTabUnfinished.text = getString(R.string.tab_unfinished_count, current.unfinished.size)
         binding.btnClearHistory.show(!showUnfinished)
         val rows = if (showUnfinished) {
-            current.unfinished.map { row -> unfinishedRow(row, now) }
+            current.unfinished.map { unfinishedRow(it, now) }
         } else {
-            current.history.map { entry -> historyRow(entry) }
+            current.history.map { historyRow(it) }
         }
         adapter.submitList(rows)
         binding.tvEmpty.show(rows.isEmpty())
@@ -111,20 +116,28 @@ class HistoryActivity : AppCompatActivity() {
         return if (row.outgoing) {
             val info = getString(R.string.row_info_outgoing, Formatters.size(row.size), expiry)
             RecordRow(
-                key = row.key, title = row.name,
+                key = row.key,
+                title = row.name,
                 info = if (row.reason.isNotEmpty()) info + "\n" + row.reason else info,
-                primaryText = R.string.action_resume, secondaryText = R.string.action_clean,
-                action = RecordRow.Action.RESUME, location = null, name = row.name
+                primaryText = R.string.action_resume,
+                primaryAction = RecordRow.Action.RESUME,
+                secondaryText = R.string.action_clean,
+                secondaryAction = RecordRow.Action.CLEAN_OUTGOING,
+                location = null,
+                name = row.name
             )
         } else {
-            val info = getString(
-                R.string.row_info_incoming,
-                Formatters.size(row.stored), Formatters.size(row.size), expiry
-            )
+            val info = getString(R.string.row_info_incoming, Formatters.size(row.stored), Formatters.size(row.size), expiry)
             RecordRow(
-                key = row.key, title = row.name, info = info,
-                primaryText = R.string.action_clean, secondaryText = 0,
-                action = RecordRow.Action.CLEAN_INCOMING, location = null, name = row.name
+                key = row.key,
+                title = row.name,
+                info = info,
+                primaryText = R.string.action_clean,
+                primaryAction = RecordRow.Action.CLEAN_INCOMING,
+                secondaryText = 0,
+                secondaryAction = RecordRow.Action.NONE,
+                location = null,
+                name = row.name
             )
         }
     }
@@ -132,17 +145,18 @@ class HistoryActivity : AppCompatActivity() {
     private fun historyRow(entry: HistoryEntry): RecordRow {
         val direction = getString(if (entry.outgoing) R.string.history_sent else R.string.history_received)
         val date = android.text.format.DateFormat.format("d MMM HH:mm", entry.time).toString()
-        val info = listOf(direction, Formatters.size(entry.size), date, stateLabel(entry.state))
-            .joinToString(" • ")
-        val openable = !entry.outgoing && entry.state == FileState.DONE && entry.location.isNotEmpty()
+        val info = listOf(direction, Formatters.size(entry.size), date, stateLabel(entry.state)).joinToString(" • ")
+        val done = !entry.outgoing && entry.state == FileState.DONE && entry.location.isNotEmpty()
+        val isFile = entry.location.startsWith("/")
         return RecordRow(
             key = entry.time.toString() + entry.name,
             title = entry.name,
             info = if (entry.reason.isNotEmpty() && entry.state != FileState.DONE) info + "\n" + entry.reason else info,
-            primaryText = if (openable) R.string.action_open else 0,
-            secondaryText = 0,
-            action = if (openable) RecordRow.Action.OPEN else RecordRow.Action.NONE,
-            location = entry.location.takeIf { openable },
+            primaryText = if (done) R.string.action_open else 0,
+            primaryAction = if (done) RecordRow.Action.OPEN else RecordRow.Action.NONE,
+            secondaryText = if (done && isFile) R.string.action_export else 0,
+            secondaryAction = if (done && isFile) RecordRow.Action.EXPORT else RecordRow.Action.NONE,
+            location = entry.location.takeIf { done },
             name = entry.name
         )
     }
@@ -158,27 +172,38 @@ class HistoryActivity : AppCompatActivity() {
 
     private fun onAction(row: RecordRow, primary: Boolean) {
         val hub = transferHub()
-        when (row.action) {
-            RecordRow.Action.RESUME -> if (primary) {
+        when (if (primary) row.primaryAction else row.secondaryAction) {
+            RecordRow.Action.RESUME -> {
                 hub.resume(row.key)
                 Toast.makeText(this, R.string.msg_resume_queued, Toast.LENGTH_SHORT).show()
-            } else {
-                hub.clean(row.key)
+                refreshSoon()
             }
 
-            RecordRow.Action.CLEAN_OUTGOING -> hub.clean(row.key)
-            RecordRow.Action.CLEAN_INCOMING -> hub.cleanIncoming(row.key)
-            RecordRow.Action.OPEN -> row.location?.let {
-                if (!FileOpener.open(this, it, row.name)) {
-                    Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
+            RecordRow.Action.CLEAN_OUTGOING -> {
+                hub.clean(row.key)
+                refreshSoon()
+            }
+
+            RecordRow.Action.CLEAN_INCOMING -> {
+                hub.cleanIncoming(row.key)
+                refreshSoon()
+            }
+
+            RecordRow.Action.OPEN -> row.location?.let { location -> openFile(location, row.name) }
+
+            RecordRow.Action.EXPORT -> row.location?.let { location ->
+                hub.exportToDownloads(location, row.name) { message ->
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
                 }
             }
 
             RecordRow.Action.NONE -> Unit
         }
-        if (row.action != RecordRow.Action.OPEN && row.action != RecordRow.Action.NONE) {
-            // the list changes after an action: read it again once the worker has done it
-            binding.root.postDelayed({ reload() }, 300)
+    }
+
+    private fun openFile(location: String, name: String) {
+        if (!FileOpener.open(this, location, name)) {
+            Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
         }
     }
 

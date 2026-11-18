@@ -95,6 +95,9 @@ interface SessionEvents {
 enum class ChannelDirection { SEND, RECEIVE }
 
 interface LinkListener {
+    /** The other phone runs another build of the app: nothing connects until both builds match. */
+    fun onIncompatible() {}
+
     /** A bug in the app was caught instead of breaking the connection. For logging only. */
     fun onInternalError(error: Throwable) {}
 

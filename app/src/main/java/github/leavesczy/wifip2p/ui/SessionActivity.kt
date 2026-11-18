@@ -1,5 +1,7 @@
 package github.leavesczy.wifip2p.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -115,6 +117,7 @@ class SessionActivity : AppCompatActivity() {
         binding.btnSearch.setOnClickListener { hub.discoverPeers() }
         binding.btnDisconnect.setOnClickListener { hub.disconnect() }
         binding.btnSendFiles.setOnClickListener { picker.launch(arrayOf("*/*")) }
+        binding.btnLog.setOnClickListener { showLog() }
         binding.btnMode.setOnClickListener { hub.setFastMode(!hub.state.value.fastMode) }
         cardOut.btnCancelTransfer.setOnClickListener { hub.cancelOut() }
         cardIn.btnCancelTransfer.setOnClickListener { hub.cancelIn() }
@@ -445,6 +448,21 @@ class SessionActivity : AppCompatActivity() {
     // =============================================================================================
     // Actions
     // =============================================================================================
+
+    /** The recent connection events, so a failure on this phone can be explained (and copied). */
+    private fun showLog() {
+        val lines = hub.connectionLog()
+        val text = if (lines.isEmpty()) getString(R.string.log_empty) else lines.joinToString("\n")
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.connection_log)
+            .setMessage(text)
+            .setPositiveButton(R.string.copy) { _, _ ->
+                getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("WifiP2P log", text))
+                Toast.makeText(this, R.string.log_copied, Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(R.string.close, null)
+            .show()
+    }
 
     private fun addShared(intent: Intent?) {
         if (intent == null) {

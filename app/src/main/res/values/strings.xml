@@ -14,7 +14,7 @@
     <string name="check_location_off">Location is off. Android needs it to find nearby devices.</string>
     <string name="grant">Grant</string>
     <string name="tips_title">Tips for maximum speed</string>
-    <string name="tips">1. On the receiving phone open “Receive files” first.\n2. On the sending phone open “Send files”, search, and tap the receiving phone. Accept the invitation on the receiving phone.\n3. Choose any number of files of any type, or share them straight from Gallery or Files with “Send with WifiP2P”.\n4. Keep both phones close (a few metres) with both screens on. Phones with Android 10+ use the fast 5 GHz band automatically.\n5. Received files are saved in Downloads/WifiP2P.</string>
+    <string name="tips">1. On the receiving phone open “Receive files” first.\n2. On the sending phone open “Send files”, search, and tap the receiving phone. Accept the invitation on the receiving phone.\n3. Choose any number of files of any type, or share them straight from Gallery or Files with “Send with WifiP2P”.\n4. Keep both phones close (a few metres) with both screens on. Phones with Android 10+ use the fast 5 GHz band automatically.\n5. Received files are kept in the app: open or export them from History.</string>
 
     <!-- Common -->
     <string name="cancel">Cancel</string>
@@ -71,7 +71,6 @@
     <string name="msg_search_failed">Search failed: %1$s</string>
     <string name="msg_connect_failed">Could not connect: %1$s</string>
     <string name="msg_connect_timeout">The other phone did not accept in time. If this keeps failing, switch the receiving phone to compatibility mode.</string>
-    <string name="msg_unreachable">Cannot reach the app on the other phone. Make sure it is on the “Receive files” screen.</string>
     <string name="msg_not_connected">Not connected to a receiver.</string>
     <string name="msg_cancelled">Cancelled</string>
     <string name="msg_sent_summary">Sent %1$d of %2$d files</string>
@@ -114,7 +113,6 @@
     <string name="label_sending">Sending</string>
     <string name="msg_join_failed">Could not join the network. Check the QR code and try again.</string>
     <string name="msg_qr_invalid">This is not a WifiP2P QR code.</string>
-    <string name="msg_qr_needs_android10">Scanning the QR code needs Android 10 or newer. Use “Search phones” instead.</string>
     <string name="msg_shared_waiting">%1$d file(s) will be sent as soon as the phones are connected.</string>
     <string name="msg_wifi_lost">The connection to the other phone was lost.</string>
     <string name="notification_ready_host">Waiting for the other phone to scan the QR code</string>
@@ -130,7 +128,7 @@
     <string name="search_phones">Search for phones instead</string>
     <string name="send_waiting">Waiting for connection…</string>
     <string name="session_empty">Files you send and receive appear here.
-Received files are saved in Downloads/WifiP2P.</string>
+Received files are kept in the app: open or export them from History.</string>
     <string name="show_qr">Show QR code</string>
     <string name="show_qr_hint">Use this on the phone that will receive the connection. The other phone scans this code.</string>
     <string name="status_connecting">Connecting to %1$s…</string>
@@ -171,4 +169,18 @@ Received files are saved in Downloads/WifiP2P.</string>
     <string name="row_expires_days">expires in %1$d days</string>
     <string name="row_expires_today">expires today</string>
     <string name="msg_resume_queued">Resume queued - it starts when the phones are connected.</string>
+    <string name="app_version">Version %1$s - both phones must show the same version</string>
+    <string name="error_version_mismatch">The other phone runs a different build of WifiP2P. Install the same (newest) version on both phones.</string>
+    <string name="action_export">Export to Downloads</string>
+    <string name="msg_exported">Copied to Downloads/WifiP2P. The original stays in the app.</string>
+    <string name="msg_export_no_space">Not enough free space to copy it to Downloads. The file stays in the app and can be opened here.</string>
+    <string name="msg_export_missing">This file is no longer on the phone.</string>
+    <string name="msg_export_failed">Could not copy the file: %1$s</string>
+    <string name="msg_unreachable">Still trying to reach the other phone. Keep both screens open. If it keeps failing, scan the QR code again.</string>
+    <string name="msg_qr_search_instead">Android 9 or older cannot join from a QR code. Looking for the phone named in the code instead.</string>
+    <string name="connection_log">Connection log</string>
+    <string name="log_empty">Nothing logged yet.</string>
+    <string name="copy">Copy</string>
+    <string name="close">Close</string>
+    <string name="log_copied">Log copied.</string>
 </resources>

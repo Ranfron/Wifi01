@@ -34,11 +34,29 @@ internal fun guessMimeType(name: String): String {
     return mime ?: "application/octet-stream"
 }
 
-/** Folder for incoming files that are still arriving. Private to the app, on the big storage volume. */
-object IncomingFolder {
+/**
+ * The folder for received files. An unfinished file sits in it as a `.part` piece; when it is complete it is
+ * renamed inside the same folder. The bytes are written once and never copied.
+ */
+object ReceivedFolder {
     fun of(context: Context): File {
         val base = context.getExternalFilesDir(null) ?: context.filesDir
-        return File(base, "incoming")
+        return File(base, "received")
+    }
+}
+
+/**
+ * Completes a received file by renaming it in its own folder: no second copy, no extra space needed.
+ * Both names are in the same folder, so the rename is instant.
+ */
+class SameFolderPublisher : Publisher {
+    override fun publish(part: File, name: String, mimeType: String): String? {
+        val folder = part.parentFile ?: throw IOException("No folder for the received file")
+        val target = File(folder, FileNames.unique(name) { File(folder, it).exists() })
+        if (!part.renameTo(target)) {
+            throw IOException("Cannot rename the received file")
+        }
+        return target.absolutePath
     }
 }
 
@@ -184,8 +202,8 @@ class UriSendSource private constructor(
 }
 
 /**
- * Publishes a complete received file into Downloads/WifiP2P, so the user finds it in any file manager.
- * Android 10+ uses MediaStore (no storage permission needed); older systems get a plain file copy.
+ * Copies a received file into Downloads/WifiP2P when the user asks for it. The copy needs room for the whole
+ * file again, so it is made only on request, after a free-space check.
  */
 class DownloadsPublisher(private val context: Context) : Publisher {
 
@@ -264,10 +282,15 @@ object FileOpener {
         }
     }
 
+    /** A stored path (no scheme) or a file:// Uri is handed out through the FileProvider; content Uris pass through. */
     private fun resolve(context: Context, location: String): Uri? {
         val uri = Uri.parse(location)
-        if (uri.scheme == "file") {
-            val path = uri.path ?: return null
+        val path = when (uri.scheme) {
+            null -> location
+            "file" -> uri.path
+            else -> null
+        }
+        if (path != null) {
             return try {
                 FileProvider.getUriForFile(context, context.packageName + ".fileprovider", File(path))
             } catch (_: IllegalArgumentException) {
