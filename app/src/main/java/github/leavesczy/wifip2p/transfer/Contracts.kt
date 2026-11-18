@@ -65,26 +65,19 @@ interface SessionEvents {
     fun onBatchFinished() {}
 }
 
-enum class LinkStatus {
-    /** Host side: server socket is open and waiting for the other device. */
-    LISTENING,
+/** The two independent byte streams of a link: what this phone sends, and what it receives. */
+enum class ChannelDirection { SEND, RECEIVE }
 
-    /** Guest side: trying to reach the group owner. */
-    CONNECTING,
+interface LinkListener {
+    /** Host side: the server socket is open. */
+    fun onListening() {}
 
-    /** TCP connection established, exchanging HELLO. */
-    HANDSHAKE,
+    /** A channel became usable ([ready] = true) or went down. It re-connects by itself. */
+    fun onChannel(direction: ChannelDirection, ready: Boolean, peerName: String?, detail: String?)
 
-    /** Both apps talk to each other; [LinkEvents.onLinkStatus] detail carries the peer's name. */
-    READY,
+    /** Guest side: the host does not answer although we keep trying (the app is probably not open there). */
+    fun onHostUnreachable() {}
 
-    /** The connection ended (peer left, cancelled, network lost...). The link re-connects by itself. */
-    DISCONNECTED,
-
-    /** Unrecoverable problem (for instance the port cannot be opened). */
-    FAILED
-}
-
-interface LinkEvents : SessionEvents {
-    fun onLinkStatus(status: LinkStatus, detail: String?)
+    /** Unrecoverable problem, for instance the port cannot be opened. */
+    fun onFailed(detail: String)
 }

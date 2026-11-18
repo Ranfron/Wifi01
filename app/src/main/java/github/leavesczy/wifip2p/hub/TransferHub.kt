@@ -4,28 +4,30 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pGroup
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
-import android.util.Log
 import androidx.core.content.ContextCompat
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.p2p.P2pController
 import github.leavesczy.wifip2p.p2p.P2pPeer
+import github.leavesczy.wifip2p.p2p.WifiJoiner
 import github.leavesczy.wifip2p.service.TransferService
 import github.leavesczy.wifip2p.storage.DownloadsSinkFactory
 import github.leavesczy.wifip2p.storage.UriSendSource
+import github.leavesczy.wifip2p.transfer.ChannelDirection
+import github.leavesczy.wifip2p.transfer.ConnectCode
+import github.leavesczy.wifip2p.transfer.DuplexLink
 import github.leavesczy.wifip2p.transfer.FileProgress
 import github.leavesczy.wifip2p.transfer.FileState
 import github.leavesczy.wifip2p.transfer.Formatters
-import github.leavesczy.wifip2p.transfer.LinkEvents
-import github.leavesczy.wifip2p.transfer.LinkRunner
-import github.leavesczy.wifip2p.transfer.LinkStatus
+import github.leavesczy.wifip2p.transfer.LinkListener
 import github.leavesczy.wifip2p.transfer.Protocol
 import github.leavesczy.wifip2p.transfer.SendSource
+import github.leavesczy.wifip2p.transfer.SessionEvents
 import github.leavesczy.wifip2p.transfer.Tuning
 import github.leavesczy.wifip2p.transfer.describeError
 import github.leavesczy.wifip2p.util.Settings
@@ -38,15 +40,18 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * One instance per process (see [github.leavesczy.wifip2p.App]). It owns the Wi-Fi Direct
- * controller and the transfer link, so a screen rotation or leaving the app never interrupts a
- * transfer. Screens only observe [state] and call the public functions on the main thread.
+ * controller, the QR join and the two-way transfer link, so a screen rotation or leaving the app
+ * never interrupts a transfer. Screens only observe [state] and call the public functions on the
+ * main thread.
  *
  * Roles:
- *  - Receiver: creates the Wi-Fi Direct group itself (on 5 GHz when possible) and waits.
- *  - Sender: searches for devices, connects to the receiver and sends any number of batches.
- * Which phone ends up as "group owner" does not matter, see [LinkRunner].
+ *  - HOST creates the Wi-Fi Direct group (on 5 GHz when possible) and shows its QR code.
+ *  - JOIN scans that QR code (or searches for the host) and connects.
+ * Afterwards both phones are equal: each one sends and receives.
  */
 class TransferHub(private val app: Application) {
+
+    private enum class LinkSource { NONE, P2P, QR }
 
     private val mutableState = MutableStateFlow(HubState())
     val state: StateFlow<HubState> = mutableState.asStateFlow()
@@ -64,10 +69,12 @@ class TransferHub(private val app: Application) {
 
     // ---- session facts. Derived into the UI state by publish() -----------------------------------
     private var p2p: P2pController? = null
+    private var joiner: WifiJoiner? = null
 
     @Volatile
-    private var link: LinkRunner? = null
+    private var link: DuplexLink? = null
     private var linkKey: String? = null
+    private var linkSource = LinkSource.NONE
 
     @Volatile
     private var p2pEnabled: Boolean? = null
@@ -78,13 +85,20 @@ class TransferHub(private val app: Application) {
     @Volatile
     private var creatingGroup = false
 
-    /** A local P2P group can exist before any client has joined it. */
     @Volatile
-    private var receiverGroupPresent = false
-    private var lastGroupCreateAcceptedAtMs = 0L
+    private var joiningQr = false
+
+    @Volatile
+    private var joinMethod = JoinMethod.NONE
 
     @Volatile
     private var connectingTo: String? = null
+
+    @Volatile
+    private var sendReady = false
+
+    @Volatile
+    private var receiveReady = false
 
     @Volatile
     private var sessionPeer: String? = null
@@ -93,48 +107,55 @@ class TransferHub(private val app: Application) {
     private var errorText: String? = null
 
     @Volatile
-    private var cancelRequested = false
+    private var cancelOutRequested = false
+
+    @Volatile
+    private var cancelInRequested = false
     private var groupAttempts = 0
     private var connectTimeout: Runnable? = null
-    private val ensureGroupRunnable = Runnable { ensureReceiverGroup() }
+    private var lastInfo: WifiP2pInfo? = null
+    private var lastGroup: WifiP2pGroup? = null
+    private var qrTarget: ConnectCode? = null
+    private val ensureGroupRunnable = Runnable { ensureHostGroup() }
     private val groupWatchdog = Runnable {
         // createGroup() never answered (framework hiccup): give up this attempt and try again
         if (creatingGroup) {
-            Log.w(P2P_TAG, "receiver group creation timed out; retrying")
             creatingGroup = false
-            receiverGroupPresent = false
             scheduleEnsureGroup(500)
             publish()
         }
     }
 
     // ---- transfer bookkeeping (guarded by lock) --------------------------------------------------
+    private var pendingShare: List<Uri> = emptyList()
     private val pendingBatches = ArrayDeque<List<Long>>()
-    private var batchIds: List<Long> = emptyList()
-    private var batchFileCount = 0
+    private var batchIdsOut: List<Long> = emptyList()
+    private var batchCountOut = 0
     private val receivedIds = HashMap<Int, Long>()
+    private var batchCountIn = 0
 
     // =============================================================================================
     // Public API (main thread)
     // =============================================================================================
 
-    fun begin(newMode: Mode) {
-        if (newMode == Mode.NONE) {
+    fun begin(newRole: Role) {
+        if (newRole == Role.NONE) {
             end()
             return
         }
-        if (mutableState.value.mode == newMode) {
+        if (mutableState.value.role == newRole) {
             return
         }
-        if (mutableState.value.mode != Mode.NONE) {
+        if (mutableState.value.role != Role.NONE) {
             end()
         }
         resetFacts()
         mutableState.value = HubState(
-            mode = newMode,
+            role = newRole,
             phase = Phase.PREPARING,
             selfName = Build.MODEL ?: "",
-            fastMode = Settings.fastMode(app)
+            fastMode = Settings.fastMode(app),
+            pendingShare = pendingShareCount()
         )
         startService()
         val controller = P2pController(app, p2pListener)
@@ -147,15 +168,36 @@ class TransferHub(private val app: Application) {
         controller.start()
     }
 
-    /** Ends the session: closes the link, leaves/destroys the Wi-Fi Direct group, stops the service. */
+    /** Ends the session: closes the link, leaves/destroys the Wi-Fi group, stops the service. */
     fun end() {
         main.removeCallbacksAndMessages(null)
         stopLink()
+        joiner?.leave()
+        joiner = null
         p2p?.stop()
         p2p = null
         resetFacts()
-        mutableState.value = HubState()
+        mutableState.value = HubState(pendingShare = pendingShareCount())
     }
+
+    /** Files shared from another app: they are sent as soon as the send channel is ready. */
+    fun addPendingShare(uris: List<Uri>) {
+        if (uris.isEmpty()) {
+            return
+        }
+        synchronized(lock) { pendingShare = (pendingShare + uris).distinct() }
+        mutableState.update { it.copy(pendingShare = pendingShareCount()) }
+        if (sendReady) {
+            flushPendingShare()
+        }
+    }
+
+    fun clearPendingShare() {
+        synchronized(lock) { pendingShare = emptyList() }
+        mutableState.update { it.copy(pendingShare = 0) }
+    }
+
+    // ---- join: search -----------------------------------------------------------------------------
 
     fun discoverPeers() {
         val controller = p2p ?: return
@@ -173,84 +215,136 @@ class TransferHub(private val app: Application) {
 
     fun connectTo(peer: P2pPeer) {
         val controller = p2p ?: return
-        if (mutableState.value.mode != Mode.SEND) {
+        if (mutableState.value.role != Role.JOIN) {
             return
         }
+        joinMethod = JoinMethod.SEARCH
         connectingTo = peer.name
         errorText = null
         publish()
-        // Wait for Android to finish stopping peer discovery before sending the invitation.
-        if (peer.address.isBlank()) {
-            connectingTo = null
-            postMessage(app.getString(R.string.msg_connect_failed, reasonText(WifiP2pManager.ERROR)))
-            publish()
-            return
-        }
-        Log.i(P2P_TAG, "sender selected peer name=${peer.name} address=${peer.address} status=${peer.status}")
-        controller.stopDiscovery {
-            if (mutableState.value.mode != Mode.SEND || connectingTo != peer.name) {
-                return@stopDiscovery
-            }
-            submitConnect(controller, peer, retriesLeft = 3)
-        }
-    }
-
-    private fun submitConnect(controller: P2pController, peer: P2pPeer, retriesLeft: Int) {
+        controller.stopDiscovery()
         controller.connect(peer.address) { ok, reason ->
             if (ok) {
-                // onSuccess only confirms that Android accepted the request for processing.
-                Log.i(P2P_TAG, "sender connect request accepted by local framework for ${peer.name}")
                 scheduleConnectTimeout()
-                controller.refresh()
-            } else if (reason == WifiP2pManager.BUSY && retriesLeft > 0) {
-                Log.w(P2P_TAG, "sender connect returned BUSY; retrying peer=${peer.name} remaining=$retriesLeft")
-                main.postDelayed({
-                    if (mutableState.value.mode == Mode.SEND && connectingTo == peer.name) {
-                        submitConnect(controller, peer, retriesLeft - 1)
-                    }
-                }, 800L)
             } else {
-                Log.e(P2P_TAG, "sender connect request rejected reason=$reason for ${peer.name}")
                 connectingTo = null
+                joinMethod = JoinMethod.NONE
                 postMessage(app.getString(R.string.msg_connect_failed, reasonText(reason)))
                 publish()
             }
         }
     }
 
-    /** Sender: leave the group / abandon the pending invitation. */
-    fun disconnectPeer() {
+    // ---- join: QR code ----------------------------------------------------------------------------
+
+    /** [text] is the content of a scanned QR code. */
+    fun joinWithQr(text: String) {
+        if (mutableState.value.role != Role.JOIN) {
+            return
+        }
+        val code = ConnectCode.parse(text)
+        if (code == null) {
+            postMessage(app.getString(R.string.msg_qr_invalid))
+            return
+        }
+        if (Build.VERSION.SDK_INT < 29) {
+            postMessage(app.getString(R.string.msg_qr_needs_android10))
+            return
+        }
+        if (p2pEnabled == false) {
+            postMessage(app.getString(R.string.banner_wifi_off))
+            return
+        }
         cancelConnectTimeout()
         stopLink()
+        joiner?.leave()
+        errorText = null
+        joinMethod = JoinMethod.QR
+        joiningQr = true
+        qrTarget = code
+        connectingTo = code.deviceName.ifBlank { app.getString(R.string.unknown_device) }
+        publish()
+        val newJoiner = WifiJoiner(app, joinerListener)
+        joiner = newJoiner
+        newJoiner.join(code.ssid, code.passphrase)
+    }
+
+    private val joinerListener = object : WifiJoiner.Listener {
+        override fun onJoined() {
+            val code = qrTarget ?: return
+            startLink(host = false, address = code.address, key = "qr:" + code.address, source = LinkSource.QR)
+            publish()
+        }
+
+        override fun onJoinFailed() {
+            joiner?.leave()
+            resetJoinFacts()
+            postMessage(app.getString(R.string.msg_join_failed))
+            publish()
+        }
+
+        override fun onLost() {
+            if (linkSource == LinkSource.QR) {
+                stopLink()
+                abortAll(null)
+            }
+            resetJoinFacts()
+            postMessage(app.getString(R.string.msg_wifi_lost))
+            publish()
+        }
+    }
+
+    private fun resetJoinFacts() {
+        joiningQr = false
+        joinMethod = JoinMethod.NONE
         connectingTo = null
+        qrTarget = null
+    }
+
+    // ---- both roles -------------------------------------------------------------------------------
+
+    /**
+     * Drops the other phone / the connection attempt. A host builds a fresh group (and QR code),
+     * a joining phone goes back to "scan or search".
+     */
+    fun disconnect() {
+        cancelConnectTimeout()
+        stopLink()
+        joiner?.leave()
+        joiner = null
+        resetJoinFacts()
+        abortAll(null)
         groupFormed = false
-        abortUnfinished(null)
-        p2p?.disconnect()
+        lastInfo = null
+        lastGroup = null
+        val role = mutableState.value.role
+        if (role == Role.HOST) {
+            mutableState.update { it.copy(qr = null, qrUnavailable = false) }
+            p2p?.disconnect { scheduleEnsureGroup(500) }
+        } else {
+            p2p?.disconnect()
+        }
         publish()
     }
 
-    /** Receiver: try to create the group again after an error. */
-    fun retryReceiving() {
+    /** Host: try to create the group again after an error. */
+    fun retryHosting() {
         groupAttempts = 0
         restartLinkAfterError()
         errorText = null
         publish()
         p2p?.refresh()
-        if (!receiverGroupPresent && !groupFormed && !creatingGroup) {
-            ensureReceiverGroup()
-        }
+        ensureHostGroup()
     }
 
     /**
-     * Receiver: switch between the fast 5 GHz group and the compatibility group (default band,
-     * works with phones that only support 2.4 GHz). The group is rebuilt right away.
+     * Host: switch between the fast 5 GHz group and the compatibility group (default band, works
+     * with phones that only support 2.4 GHz). The group is rebuilt right away.
      */
     fun setFastMode(enabled: Boolean) {
         Settings.setFastMode(app, enabled)
-        receiverGroupPresent = false
-        lastGroupCreateAcceptedAtMs = 0L
         mutableState.update { it.copy(fastMode = enabled, fiveGhz = false) }
-        if (mutableState.value.mode != Mode.RECEIVE) {
+        if (mutableState.value.role != Role.HOST) {
             return
         }
         stopLink()
@@ -258,7 +352,10 @@ class TransferHub(private val app: Application) {
         creatingGroup = false
         groupAttempts = 0
         errorText = null
-        abortUnfinished(null)
+        lastInfo = null
+        lastGroup = null
+        abortAll(null)
+        mutableState.update { it.copy(qr = null, qrUnavailable = false) }
         main.removeCallbacks(ensureGroupRunnable)
         main.removeCallbacks(groupWatchdog)
         publish()
@@ -273,9 +370,9 @@ class TransferHub(private val app: Application) {
         }
     }
 
-    /** Sender: queue files. Their size/name are read on a worker thread, then they are sent in order. */
+    /** Queue files for sending. Their size/name are read on a worker thread, then they are sent in order. */
     fun enqueue(uris: List<Uri>) {
-        if (mutableState.value.mode != Mode.SEND || uris.isEmpty()) {
+        if (mutableState.value.role == Role.NONE || uris.isEmpty()) {
             return
         }
         val unique = uris.distinct()
@@ -315,14 +412,34 @@ class TransferHub(private val app: Application) {
         }
     }
 
-    /** Stops the running transfer(s). The connection restarts by itself a moment later. */
-    fun cancelTransfers() {
-        cancelRequested = true
-        link?.cancelTransfers()
+    /** Stops what this phone is sending. The channel restarts by itself a moment later. */
+    fun cancelOut() {
+        cancelOutRequested = true
+        link?.cancelSending()
+    }
+
+    /** Stops what this phone is receiving. The channel restarts by itself a moment later. */
+    fun cancelIn() {
+        cancelInRequested = true
+        link?.cancelReceiving()
     }
 
     fun clearFinished() {
         mutableState.update { s -> s.copy(items = s.items.filter { !it.isFinished }) }
+    }
+
+    private fun pendingShareCount(): Int = synchronized(lock) { pendingShare.size }
+
+    private fun flushPendingShare() {
+        val files = synchronized(lock) {
+            val copy = pendingShare
+            pendingShare = emptyList()
+            copy
+        }
+        mutableState.update { it.copy(pendingShare = 0) }
+        if (files.isNotEmpty()) {
+            enqueue(files)
+        }
     }
 
     // =============================================================================================
@@ -336,20 +453,23 @@ class TransferHub(private val app: Application) {
             if (!enabled) {
                 cancelConnectTimeout()
                 stopLink()
+                joiner?.leave()
+                joiner = null
+                resetJoinFacts()
                 groupFormed = false
                 creatingGroup = false
-                receiverGroupPresent = false
-                lastGroupCreateAcceptedAtMs = 0L
-                connectingTo = null
-                abortUnfinished(null)
-                mutableState.update { it.copy(peers = emptyList(), discovering = false) }
+                lastInfo = null
+                lastGroup = null
+                abortAll(null)
+                mutableState.update {
+                    it.copy(peers = emptyList(), discovering = false, qr = null, qrUnavailable = false)
+                }
             } else {
                 errorText = null
                 groupAttempts = 0 // Wi-Fi was switched off/on: a fresh start, as the error text suggests
                 p2p?.refresh()
-                if (mutableState.value.mode == Mode.RECEIVE) {
-                    // Let the initial requestGroupInfo() callback arrive before creating a group.
-                    scheduleEnsureGroup(900L)
+                if (mutableState.value.role == Role.HOST) {
+                    ensureHostGroup()
                 }
             }
             publish()
@@ -358,6 +478,7 @@ class TransferHub(private val app: Application) {
         override fun onThisDevice(name: String, address: String) {
             if (name.isNotBlank()) {
                 mutableState.update { it.copy(selfName = name) }
+                updateQr()
             }
         }
 
@@ -376,28 +497,9 @@ class TransferHub(private val app: Application) {
             handleConnectionInfo(info)
         }
 
-        override fun onGroupInfo(exists: Boolean) {
-            if (mutableState.value.mode != Mode.RECEIVE) return
-            val now = SystemClock.elapsedRealtime()
-            Log.i(P2P_TAG, "receiver group info exists=$exists creating=$creatingGroup")
-            if (exists) {
-                receiverGroupPresent = true
-                lastGroupCreateAcceptedAtMs = now
-                if (creatingGroup) {
-                    creatingGroup = false
-                    main.removeCallbacks(groupWatchdog)
-                }
-            } else {
-                val sinceAccepted = now - lastGroupCreateAcceptedAtMs
-                val mayBeStale = lastGroupCreateAcceptedAtMs != 0L && sinceAccepted <= GROUP_CREATE_NULL_GRACE_MS
-                if (!mayBeStale) {
-                    receiverGroupPresent = false
-                    if (!creatingGroup) scheduleEnsureGroup(1_500L)
-                } else {
-                    Log.w(P2P_TAG, "ignoring stale null group-info callback (${sinceAccepted}ms after create)")
-                }
-            }
-            publish()
+        override fun onGroupInfo(group: WifiP2pGroup?) {
+            lastGroup = group
+            updateQr()
         }
 
         override fun onChannelLost() {
@@ -406,41 +508,68 @@ class TransferHub(private val app: Application) {
     }
 
     private fun handleConnectionInfo(info: WifiP2pInfo?) {
-        val mode = mutableState.value.mode
-        if (mode == Mode.NONE) {
+        val role = mutableState.value.role
+        if (role == Role.NONE) {
             return
         }
+        lastInfo = info
         if (info == null) {
             groupFormed = false
-            stopLink()
-            abortUnfinished(null)
-            if (mode == Mode.RECEIVE && !creatingGroup && !receiverGroupPresent) {
-                // Do not rebuild a receiver group based only on a possibly stale null connection-info callback.
-                val sinceAccepted = SystemClock.elapsedRealtime() - lastGroupCreateAcceptedAtMs
-                if (lastGroupCreateAcceptedAtMs == 0L || sinceAccepted > GROUP_CREATE_NULL_GRACE_MS) {
-                    scheduleEnsureGroup(1_500L)
-                }
+            if (linkSource == LinkSource.P2P) {
+                stopLink()
+                abortAll(null)
+            }
+            // a QR link does not depend on a Wi-Fi Direct group of this phone
+            updateQr()
+            if (role == Role.HOST && !creatingGroup) {
+                // A host without a group is useless: build it again (debounced).
+                scheduleEnsureGroup(1_000)
             }
             publish()
             return
         }
         groupFormed = true
-        if (mode == Mode.RECEIVE) {
-            receiverGroupPresent = true
-            creatingGroup = false
-            main.removeCallbacks(groupWatchdog)
-        }
         groupAttempts = 0
-        connectingTo = null
         cancelConnectTimeout()
         errorText = null
-        startLinkFor(info)
+        if (linkSource != LinkSource.QR && !joiningQr) {
+            connectingTo = null
+            startLinkFor(info)
+        }
+        updateQr()
         publish()
     }
 
-    private fun ensureReceiverGroup() {
+    /** Host: build the QR code as soon as group and connection details are known. */
+    private fun updateQr() {
+        if (mutableState.value.role != Role.HOST) {
+            return
+        }
+        val info = lastInfo
+        val group = lastGroup
+        if (info == null || !info.isGroupOwner || group == null) {
+            mutableState.update { it.copy(qr = null, qrUnavailable = false) }
+            return
+        }
+        val ssid = group.networkName
+        val passphrase = group.passphrase
+        val address = info.groupOwnerAddress?.hostAddress
+        if (ssid.isNullOrBlank() || passphrase.isNullOrBlank() || address.isNullOrBlank()) {
+            mutableState.update { it.copy(qr = null, qrUnavailable = true) }
+            return
+        }
+        val payload = ConnectCode(ssid, passphrase, address, Protocol.PORT, mutableState.value.selfName).encode()
+        if (ConnectCode.parse(payload) == null) {
+            // e.g. an unusual group address: the scanner would reject it, so do not show a useless code
+            mutableState.update { it.copy(qr = null, qrUnavailable = true) }
+            return
+        }
+        mutableState.update { it.copy(qr = QrInfo(payload, ssid), qrUnavailable = false) }
+    }
+
+    private fun ensureHostGroup() {
         val controller = p2p ?: return
-        if (mutableState.value.mode != Mode.RECEIVE || p2pEnabled != true || groupFormed || receiverGroupPresent || creatingGroup) {
+        if (mutableState.value.role != Role.HOST || p2pEnabled != true || groupFormed || creatingGroup) {
             return
         }
         if (groupAttempts >= MAX_GROUP_ATTEMPTS) {
@@ -455,23 +584,16 @@ class TransferHub(private val app: Application) {
         main.removeCallbacks(groupWatchdog)
         main.postDelayed(groupWatchdog, GROUP_TIMEOUT_MS)
         controller.createGroup(prefer5Ghz = mutableState.value.fastMode) { result ->
+            main.removeCallbacks(groupWatchdog)
             if (!creatingGroup) {
                 return@createGroup // the watchdog already gave up on this attempt
             }
+            creatingGroup = false
             if (result.ok) {
-                lastGroupCreateAcceptedAtMs = SystemClock.elapsedRealtime()
                 mutableState.update { it.copy(fiveGhz = result.fiveGhz) }
-                Log.i(P2P_TAG, "receiver createGroup accepted fiveGhz=${result.fiveGhz}; waiting for group-info callback")
-                // Keep creatingGroup=true until requestGroupInfo confirms that the group exists.
                 controller.refresh()
-                main.postDelayed({ if (creatingGroup) controller.refresh() }, 700L)
-                main.postDelayed({ if (creatingGroup) controller.refresh() }, 1_800L)
-                main.postDelayed({ if (creatingGroup) controller.refresh() }, 4_000L)
+                main.postDelayed({ controller.refresh() }, 1_500)
             } else {
-                main.removeCallbacks(groupWatchdog)
-                creatingGroup = false
-                receiverGroupPresent = false
-                Log.e(P2P_TAG, "receiver createGroup failed reason=${result.reason}")
                 scheduleEnsureGroup(1_500)
             }
             publish()
@@ -488,6 +610,7 @@ class TransferHub(private val app: Application) {
         val runnable = Runnable {
             if (!groupFormed && connectingTo != null) {
                 connectingTo = null
+                joinMethod = JoinMethod.NONE
                 p2p?.disconnect()
                 postMessage(app.getString(R.string.msg_connect_timeout))
                 publish()
@@ -513,7 +636,7 @@ class TransferHub(private val app: Application) {
     }
 
     // =============================================================================================
-    // Link (TCP session on top of the group)
+    // Link (two TCP connections on top of the Wi-Fi connection)
     // =============================================================================================
 
     private fun startLinkFor(info: WifiP2pInfo) {
@@ -522,27 +645,25 @@ class TransferHub(private val app: Application) {
         if (!owner && host == null) {
             return
         }
-        val key = if (owner) "host" else "guest:$host"
+        startLink(
+            host = owner, address = host, key = if (owner) "host" else "guest:$host", source = LinkSource.P2P
+        )
+    }
+
+    private fun startLink(host: Boolean, address: String?, key: String, source: LinkSource) {
         if (link != null && key == linkKey) {
             return
         }
         stopLink()
-        val mode = mutableState.value.mode
-        val role = if (mode == Mode.SEND) Protocol.ROLE_SENDER else Protocol.ROLE_RECEIVER
         val name = mutableState.value.selfName.ifBlank { Build.MODEL ?: "Android" }
-        val runner = LinkRunner(
-            role = role,
-            deviceName = name,
-            tuning = tuning,
-            sinks = if (role == Protocol.ROLE_RECEIVER) sinks else null,
-            events = linkEvents
-        )
+        val runner = DuplexLink(name, tuning, sinks, outEvents, inEvents, linkListener)
         link = runner
         linkKey = key
-        if (owner) {
+        linkSource = source
+        if (host || address == null) {
             runner.startHost(Protocol.PORT)
         } else {
-            runner.startGuest(host!!, Protocol.PORT)
+            runner.startGuest(address, Protocol.PORT)
         }
     }
 
@@ -550,109 +671,145 @@ class TransferHub(private val app: Application) {
         link?.stop()
         link = null
         linkKey = null
+        linkSource = LinkSource.NONE
+        sendReady = false
+        receiveReady = false
         sessionPeer = null
     }
 
-    private val linkEvents = object : LinkEvents {
+    private val linkListener = object : LinkListener {
 
-        override fun onLinkStatus(status: LinkStatus, detail: String?) {
-            when (status) {
-                LinkStatus.READY -> {
-                    cancelRequested = false
-                    val peer = detail?.takeIf { it.isNotBlank() } ?: app.getString(R.string.unknown_device)
+        override fun onChannel(direction: ChannelDirection, ready: Boolean, peerName: String?, detail: String?) {
+            if (direction == ChannelDirection.SEND) {
+                sendReady = ready
+            } else {
+                receiveReady = ready
+            }
+            if (ready) {
+                if (direction == ChannelDirection.SEND) {
+                    cancelOutRequested = false
+                } else {
+                    cancelInRequested = false
+                }
+                if (sessionPeer == null) {
+                    val peer = peerName?.takeIf { it.isNotBlank() } ?: app.getString(R.string.unknown_device)
                     sessionPeer = peer
                     errorText = null
+                    joiningQr = false
+                    connectingTo = null
+                    joinMethod = JoinMethod.NONE
+                    cancelConnectTimeout()
                     postMessage(app.getString(R.string.msg_connected_to, peer))
                 }
-
-                LinkStatus.DISCONNECTED -> {
+                if (direction == ChannelDirection.SEND) {
+                    flushPendingShare()
+                }
+            } else {
+                if (direction == ChannelDirection.SEND) {
+                    abortOut(detail)
+                } else {
+                    abortIn(detail)
+                }
+                if (!sendReady && !receiveReady) {
                     val wasConnected = sessionPeer != null
                     sessionPeer = null
-                    abortUnfinished(detail)
-                    if (wasConnected && !cancelRequested) {
+                    if (wasConnected && !cancelOutRequested && !cancelInRequested) {
                         postMessage(app.getString(R.string.msg_connection_ended))
                     }
                 }
-
-                LinkStatus.FAILED -> {
-                    sessionPeer = null
-                    errorText = detail ?: app.getString(R.string.error_connection_lost)
-                    abortUnfinished(detail)
-                }
-
-                LinkStatus.CONNECTING -> {
-                    if (detail == LinkRunner.UNREACHABLE) {
-                        postMessage(app.getString(R.string.msg_unreachable))
-                    }
-                }
-
-                LinkStatus.LISTENING, LinkStatus.HANDSHAKE -> Unit
             }
             publish()
         }
 
+        override fun onHostUnreachable() {
+            postMessage(app.getString(R.string.msg_unreachable))
+        }
+
+        override fun onFailed(detail: String) {
+            sessionPeer = null
+            sendReady = false
+            receiveReady = false
+            errorText = detail
+            abortAll(detail)
+            publish()
+        }
+    }
+
+    // ---- events of the files this phone sends ----------------------------------------------------
+
+    private val outEvents = object : SessionEvents {
+
         override fun onBatchStarted(fileCount: Int, totalBytes: Long) {
             synchronized(lock) {
-                batchFileCount = fileCount
-                if (mutableState.value.mode == Mode.SEND) {
-                    batchIds = pendingBatches.removeFirstOrNull() ?: emptyList()
-                } else {
-                    receivedIds.clear()
-                }
+                batchCountOut = fileCount
+                batchIdsOut = pendingBatches.removeFirstOrNull() ?: emptyList()
             }
         }
 
         override fun onFileStarted(index: Int, name: String, size: Long) {
-            if (mutableState.value.mode == Mode.SEND) {
-                val id = idFor(index) ?: return
-                updateItem(id) { it.copy(state = FileState.ACTIVE, message = null) }
-            } else {
-                val id = itemIds.getAndIncrement()
-                synchronized(lock) { receivedIds[index] = id }
-                addItems(listOf(TransferItem(id, name, size, Direction.IN, FileState.ACTIVE)))
-            }
+            val id = idOut(index) ?: return
+            updateItem(id) { it.copy(state = FileState.ACTIVE, message = null) }
         }
 
         override fun onProgress(progress: FileProgress) {
-            val id = idFor(progress.index) ?: return
-            val count = synchronized(lock) { batchFileCount }
-            val direction = if (mutableState.value.mode == Mode.SEND) Direction.OUT else Direction.IN
-            val active = ActiveTransfer(
-                itemId = id,
-                name = progress.name,
-                direction = direction,
-                fileBytes = progress.fileBytes,
-                fileSize = progress.fileSize,
-                fileNumber = progress.index + 1,
-                fileCount = count,
-                batchBytes = progress.batchBytes,
-                batchTotal = progress.batchTotal,
-                bytesPerSecond = progress.bytesPerSecond,
-                etaSeconds = Formatters.etaSeconds(progress.batchTotal - progress.batchBytes, progress.bytesPerSecond)
-            )
-            mutableState.update { it.copy(active = active) }
+            val id = idOut(progress.index) ?: return
+            val count = synchronized(lock) { batchCountOut }
+            val active = activeOf(id, Direction.OUT, progress, count)
+            mutableState.update { it.copy(activeOut = active) }
         }
 
         override fun onFileFinished(index: Int, name: String, state: FileState, message: String?, location: String?) {
-            val id = idFor(index) ?: return
+            val id = idOut(index) ?: return
             updateItem(id) { it.copy(state = state, message = message, location = location) }
         }
 
         override fun onBatchFinished() {
-            val sending = mutableState.value.mode == Mode.SEND
-            val ids: Set<Long> = synchronized(lock) {
-                if (sending) batchIds.toSet() else receivedIds.values.toSet()
-            }
+            val ids = synchronized(lock) { batchIdsOut.toSet() }
             val batchItems = mutableState.value.items.filter { it.id in ids }
             val done = batchItems.count { it.state == FileState.DONE }
-            mutableState.update { it.copy(active = null) }
-            if (batchItems.isNotEmpty() && !cancelRequested) {
-                postMessage(
-                    app.getString(
-                        if (sending) R.string.msg_sent_summary else R.string.msg_received_summary,
-                        done, batchItems.size
-                    )
-                )
+            mutableState.update { it.copy(activeOut = null) }
+            if (batchItems.isNotEmpty() && !cancelOutRequested) {
+                postMessage(app.getString(R.string.msg_sent_summary, done, batchItems.size))
+            }
+        }
+    }
+
+    // ---- events of the files this phone receives -------------------------------------------------
+
+    private val inEvents = object : SessionEvents {
+
+        override fun onBatchStarted(fileCount: Int, totalBytes: Long) {
+            synchronized(lock) {
+                batchCountIn = fileCount
+                receivedIds.clear()
+            }
+        }
+
+        override fun onFileStarted(index: Int, name: String, size: Long) {
+            val id = itemIds.getAndIncrement()
+            synchronized(lock) { receivedIds[index] = id }
+            addItems(listOf(TransferItem(id, name, size, Direction.IN, FileState.ACTIVE)))
+        }
+
+        override fun onProgress(progress: FileProgress) {
+            val id = idIn(progress.index) ?: return
+            val count = synchronized(lock) { batchCountIn }
+            val active = activeOf(id, Direction.IN, progress, count)
+            mutableState.update { it.copy(activeIn = active) }
+        }
+
+        override fun onFileFinished(index: Int, name: String, state: FileState, message: String?, location: String?) {
+            val id = idIn(index) ?: return
+            updateItem(id) { it.copy(state = state, message = message, location = location) }
+        }
+
+        override fun onBatchFinished() {
+            val ids = synchronized(lock) { receivedIds.values.toSet() }
+            val batchItems = mutableState.value.items.filter { it.id in ids }
+            val done = batchItems.count { it.state == FileState.DONE }
+            mutableState.update { it.copy(activeIn = null) }
+            if (batchItems.isNotEmpty() && !cancelInRequested) {
+                postMessage(app.getString(R.string.msg_received_summary, done, batchItems.size))
             }
         }
     }
@@ -661,8 +818,24 @@ class TransferHub(private val app: Application) {
     // Helpers
     // =============================================================================================
 
-    private fun idFor(index: Int): Long? = synchronized(lock) {
-        if (mutableState.value.mode == Mode.SEND) batchIds.getOrNull(index) else receivedIds[index]
+    private fun idOut(index: Int): Long? = synchronized(lock) { batchIdsOut.getOrNull(index) }
+
+    private fun idIn(index: Int): Long? = synchronized(lock) { receivedIds[index] }
+
+    private fun activeOf(id: Long, direction: Direction, progress: FileProgress, fileCount: Int): ActiveTransfer {
+        return ActiveTransfer(
+            itemId = id,
+            name = progress.name,
+            direction = direction,
+            fileBytes = progress.fileBytes,
+            fileSize = progress.fileSize,
+            fileNumber = progress.index + 1,
+            fileCount = fileCount,
+            batchBytes = progress.batchBytes,
+            batchTotal = progress.batchTotal,
+            bytesPerSecond = progress.bytesPerSecond,
+            etaSeconds = Formatters.etaSeconds(progress.batchTotal - progress.batchBytes, progress.bytesPerSecond)
+        )
     }
 
     private fun addItems(items: List<TransferItem>) {
@@ -683,30 +856,44 @@ class TransferHub(private val app: Application) {
         }
     }
 
-    /** Everything still waiting or running cannot continue: close it with a precise reason. */
-    private fun abortUnfinished(reason: String?) {
-        val cancelled = cancelRequested
+    /** Everything this phone still had to SEND cannot continue: close it with a precise reason. */
+    private fun abortOut(reason: String?) {
+        val cancelled = cancelOutRequested
+        synchronized(lock) {
+            pendingBatches.clear()
+            batchIdsOut = emptyList()
+        }
+        abortItems(Direction.OUT, cancelled, reason)
+        mutableState.update { it.copy(activeOut = null) }
+    }
+
+    /** Everything this phone was RECEIVING cannot continue. */
+    private fun abortIn(reason: String?) {
+        val cancelled = cancelInRequested
+        synchronized(lock) { receivedIds.clear() }
+        abortItems(Direction.IN, cancelled, reason)
+        mutableState.update { it.copy(activeIn = null) }
+    }
+
+    private fun abortAll(reason: String?) {
+        abortOut(reason)
+        abortIn(reason)
+    }
+
+    private fun abortItems(direction: Direction, cancelled: Boolean, reason: String?) {
         val message = if (cancelled) {
             app.getString(R.string.msg_cancelled)
         } else {
             reason?.takeIf { it.isNotBlank() } ?: app.getString(R.string.error_connection_lost)
         }
-        synchronized(lock) {
-            pendingBatches.clear()
-            batchIds = emptyList()
-            receivedIds.clear()
-        }
         mutableState.update { s ->
-            s.copy(
-                active = null,
-                items = s.items.map {
-                    if (it.state == FileState.QUEUED || it.state == FileState.ACTIVE) {
-                        it.copy(state = if (cancelled) FileState.CANCELLED else FileState.FAILED, message = message)
-                    } else {
-                        it
-                    }
+            s.copy(items = s.items.map {
+                if (it.direction == direction && (it.state == FileState.QUEUED || it.state == FileState.ACTIVE)) {
+                    it.copy(state = if (cancelled) FileState.CANCELLED else FileState.FAILED, message = message)
+                } else {
+                    it
                 }
-            )
+            })
         }
     }
 
@@ -718,27 +905,35 @@ class TransferHub(private val app: Application) {
         p2pEnabled = null
         groupFormed = false
         creatingGroup = false
-        receiverGroupPresent = false
-        lastGroupCreateAcceptedAtMs = 0L
+        joiningQr = false
+        joinMethod = JoinMethod.NONE
         connectingTo = null
         sessionPeer = null
+        sendReady = false
+        receiveReady = false
         errorText = null
-        cancelRequested = false
+        cancelOutRequested = false
+        cancelInRequested = false
         groupAttempts = 0
         connectTimeout = null
         linkKey = null
+        linkSource = LinkSource.NONE
+        lastInfo = null
+        lastGroup = null
+        qrTarget = null
         synchronized(lock) {
             pendingBatches.clear()
-            batchIds = emptyList()
+            batchIdsOut = emptyList()
             receivedIds.clear()
-            batchFileCount = 0
+            batchCountOut = 0
+            batchCountIn = 0
         }
     }
 
     /** Turns the facts above into the state the screens render. */
     private fun publish() {
         mutableState.update { s ->
-            if (s.mode == Mode.NONE) {
+            if (s.role == Role.NONE) {
                 return@update s
             }
             val phase = when {
@@ -746,10 +941,22 @@ class TransferHub(private val app: Application) {
                 p2pEnabled == false -> Phase.P2P_OFF
                 errorText != null -> Phase.ERROR
                 p2pEnabled == null -> Phase.PREPARING
-                s.mode == Mode.RECEIVE -> if (groupFormed || receiverGroupPresent) Phase.READY else Phase.PREPARING
-                else -> if (groupFormed || connectingTo != null) Phase.CONNECTING else Phase.READY
+                s.role == Role.HOST -> if (groupFormed) Phase.READY else Phase.PREPARING
+                else -> if (joiningQr || groupFormed || connectingTo != null || link != null) {
+                    Phase.CONNECTING
+                } else {
+                    Phase.READY
+                }
             }
-            s.copy(phase = phase, detail = errorText, peerName = sessionPeer, connectingTo = connectingTo)
+            s.copy(
+                phase = phase,
+                detail = errorText,
+                peerName = sessionPeer,
+                connectingTo = connectingTo,
+                joinMethod = joinMethod,
+                sendReady = sendReady,
+                receiveReady = receiveReady
+            )
         }
     }
 
@@ -766,7 +973,5 @@ class TransferHub(private val app: Application) {
         const val MAX_GROUP_ATTEMPTS = 4
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val GROUP_TIMEOUT_MS = 25_000L
-        const val GROUP_CREATE_NULL_GRACE_MS = 6_000L
-        const val P2P_TAG = "WifiP2P"
     }
 }

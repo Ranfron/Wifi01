@@ -9,19 +9,19 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
 
 | Problem in 1.0 | Fix in 2.0 |
 |---|---|
-| Only images could be sent (`image/*`), one file at a time | Any file type, multi-select, and the Android **Share** sheet ("Send with WifiP2P") |
-| The file was first copied to the cache with a **1 KB** buffer, then sent | Streamed straight from the source: no temp copy, 512 KB chunks |
+| Only images could be sent, one file at a time | Any file type, many files, and the Android **Share** sheet ("Send with WifiP2P") |
+| Only the receiver could be the group owner; the sender had to search and invite | **QR code**: the host shows a code, the other phone scans it and joins at once - no search, no invitation dialog |
+| Sending and receiving were two separate modes | **Both phones send and receive** at the same time (two independent connections per link) |
+| File copied to the cache with a 1 KB buffer, then sent | Streamed straight from the source: no temp copy, 512 KB chunks |
 | Disk and network worked strictly one after the other | **Pipelined I/O**: while the network sends chunk N the disk already reads N+1..N+6 (and the reverse when receiving) |
-| A log line was emitted for every chunk (slowed the transfer, grew the UI without bound) | Progress is throttled to 10 updates per second; live speed and ETA are shown |
-| Wi-Fi Direct group on the default band (usually 2.4 GHz) | Receiver starts with the **default Wi-Fi Direct band** for compatibility; 5 GHz is an optional speed mode |
-| Phone could throttle the radio / CPU after the screen turned off | Foreground service + CPU wake lock + Wi-Fi lock, progress notification with a Stop button |
-| Receiver had to press "Create group" and "Start listening" for every file, 15 s accept timeout | Fully automatic; the link heals itself after cancel, error or reconnect |
-| Only worked if the *receiver* became group owner | Either phone can be group owner - the TCP role and the transfer role are independent |
-| `serverSocket.reuseAddress` was set after `bind()` (no effect) | Set before bind, plus bind retry |
-| `ObjectInputStream.readObject()` on network data (unsafe), no size, no integrity check | Hand-written binary protocol: bounded lengths, file size announced up-front, **CRC-32 per file**, storage check before the batch starts |
-| Received files were hidden in the app cache | Saved to **Downloads/WifiP2P** (MediaStore on Android 10+), tap to open; partial files are always deleted |
+| A log line for every chunk | Progress is throttled to 10 updates per second; live speed and ETA per direction |
+| Wi-Fi Direct group on the default band (usually 2.4 GHz) | Host requests a **5 GHz group** on Android 10+, with a compatibility switch for old phones |
+| Phone could throttle the radio / CPU after the screen turned off | Foreground service + CPU wake lock + Wi-Fi lock, notification with a Stop button |
+| Receiver had to press buttons for every file, 15 s accept timeout | Fully automatic; each channel heals itself after cancel, error or reconnect |
+| `ObjectInputStream.readObject()` on network data, no size, no integrity check | Hand-written binary protocol: bounded lengths, file size announced up-front, **CRC-32 per file**, storage check before the batch starts |
+| Received files hidden in the app cache | Saved to **Downloads/WifiP2P** (MediaStore on Android 10+), tap to open; partial files are always deleted |
 | Path traversal possible through the received file name | File names are sanitised, duplicates get "(1)", "(2)"... |
-| Runtime request for normal permissions, no Wi-Fi/Location checks, fixed portrait | Correct permission flow (`NEARBY_WIFI_DEVICES` / Location / notifications), Wi-Fi & Location banners, rotation safe |
+| `serverSocket.reuseAddress` set after `bind()` (no effect) | Set before bind, plus bind retry |
 
 ## Build
 
@@ -37,14 +37,15 @@ Toolchain is unchanged from 1.0 (AGP 9.0.0, Gradle 9.3.1, Kotlin 2.3.10, minSdk 
 
 ## How to use
 
-1. **Receiver**: Home > *Receive files*. Nothing else to press - the phone creates a compatible Wi-Fi Direct group and shows its name.
-2. **Sender**: Home > *Send files* > *Search devices* > tap the receiver. Accept the invitation on the receiver.
-3. *Choose files to send* (any number, any type) - or share files from Gallery / Files with *Send with WifiP2P*
-   (they are sent as soon as the connection is up).
-4. Received files are in **Downloads/WifiP2P**.
+1. **Phone A**: Home > *Show QR code*. The phone creates a fast Wi-Fi Direct network and shows the code.
+2. **Phone B**: Home > *Scan QR code*, point the camera at phone A's code. Android asks once to join the network - confirm.
+   The phones are connected. (Fallback without a camera: *Search phones* and tap the other phone, accept the invitation.)
+3. On **either** phone: *Send files* (any number, any type). Or share files from Gallery / Files with
+   *Send with WifiP2P* - they wait on the home screen and are sent as soon as the phones are connected.
+4. Both phones see both directions live. Received files are in **Downloads/WifiP2P** and can be tapped to open.
 
 Tips for maximum speed: stay within a few metres, keep both screens on, and use phones with Android 10+ on both sides
-(5 GHz). Use fast mode only when both phones support the receiver’s 5 GHz Wi-Fi Direct channel; otherwise keep the receiver in compatibility mode.
+(5 GHz). If an old phone cannot connect to a 5 GHz group, switch the receiver to *compatibility mode* on its screen.
 Real-world speed is set by the Wi-Fi Direct radio link, not by the app. In loopback tests on a PC the engine reached
 about 1 GB/s (memory to memory) and several hundred MB/s (disk to disk) including CRC verification - far above what
 Wi-Fi Direct delivers - so on a phone the radio, not the transfer engine, is the bottleneck. Actual phone speeds were
@@ -54,34 +55,51 @@ not measured here.
 
 ```
 transfer/   pure Kotlin engine (no Android classes): protocol, sender, receiver, pipelined copy, link runner
-p2p/        Wi-Fi Direct controller (compatible default band, optional 5 GHz, discovery, connect)
+p2p/        Wi-Fi Direct controller (5 GHz group, discovery, connect, cleanup)
 hub/        process-wide session state (StateFlow) - survives rotation, owns P2P + link
 service/    foreground service: notification, wake lock, Wi-Fi lock
 storage/    content-Uri file sources, Downloads sink (MediaStore / legacy), file opener
-ui/ util/   screens (View system + ViewBinding + Material 3), adapters, permissions
+ui/         home, one session screen for both roles, QR scanner (CameraX), adapters
+qr/         QR encoder/decoder on top of ZXing (pure JVM, unit-tested)
+util/       permissions, system checks, settings
 ```
 
-### Wire protocol (v1)
+### Link and wire protocol (v2)
+
+A link consists of **two TCP connections**: one carries the files this phone sends, the other the files it receives.
+The guest opens both and states the direction of each in its HELLO; the host answers with the complementary role.
 
 Control messages are `[type:1][length:4][payload]` frames (big-endian, payload <= 64 KB).
 File data is **not** framed: after a `FILE` frame the sender writes exactly `size` raw bytes, then `FILE_END` (CRC-32).
 
 ```
-HELLO (both)  ->  BATCH(count,total) -> BATCH_REPLY -> { FILE, raw bytes, FILE_END -> FILE_ACK }* -> BATCH_END
+HELLO (guest role, name) -> HELLO (host role, name)
+sending channel:  BATCH(count,total) -> BATCH_REPLY -> { FILE, raw bytes, FILE_END -> FILE_ACK }* -> BATCH_END
 ```
 
 The receiver enforces the announced batch (count and total size), so a peer cannot bypass the storage check.
+A second phone cannot take over a link while the first one is connected (connections from another address are refused).
+
+### QR code payload
+
+```
+wifip2p://c?v=1&s=<Wi-Fi Direct network name>&p=<passphrase>&a=<host IP>&o=<port>&n=<phone name>
+```
+
+Only private (local-network) addresses are accepted, so a scanned code can never steer the app to the internet.
 
 ## Tests
 
-`app/src/test` contains 37 JVM tests plus the template example (`./gradlew test`) that run the real engine over TCP sockets on localhost:
-bit-exact transfer of many sizes in both group-owner topologies, corruption detection (a flipped bit is caught and only
-that file fails), cancel + automatic reconnect, partial-file cleanup, refused batches (no storage), unreadable files,
-role mismatch, stalled receiver watchdog, hostile peers (protocol violations, path traversal), 300 small files, etc.
+`app/src/test` contains about 60 JVM tests (`./gradlew test`) that run the real engine over TCP sockets on localhost:
+bit-exact transfer in both directions and simultaneously, cancel in one direction while the other keeps running,
+corruption detection (a flipped bit is caught and only that file fails), automatic reconnect, partial-file cleanup,
+refused batches (no storage), unreadable files, stalled receiver watchdog, a second phone being refused,
+hostile peers (protocol violations, path traversal), 300 small files. The QR payload is tested end to end with the real
+ZXing library (rotation, low resolution, camera row padding) and with hostile input.
 
 ## Known limits
 
-* Wi-Fi Direct behaviour differs between phone makers; compatibility mode is the default; 5 GHz is optional because the receiver cannot verify the sender’s band support in advance.
+* Wi-Fi Direct behaviour differs between phone makers; the 5 GHz request falls back to the default group automatically.
 * The progress notification needs the notification permission on Android 13+ (the transfer works without it).
 * Android 15+ limits data-sync foreground services to about 6 hours per session.
 * No resume of an interrupted file (it is deleted and can be sent again).

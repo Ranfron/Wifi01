@@ -9,6 +9,9 @@
     <color name="brand_primary_container">#FFCFE5FF</color>
     <color name="brand_on_primary_container">#FF001D33</color>
 
+    <!-- The QR card is white in light and dark mode (scanners need the contrast) -->
+    <color name="qr_card_text">#FF202124</color>
+
     <!-- Transfer status colours -->
     <color name="status_ok">#FF2E7D32</color>
     <color name="status_error">#FFBA1A1A</color>

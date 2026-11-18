@@ -160,8 +160,18 @@ class FinishedFile(
     val location: String?
 )
 
-class RecordingEvents : LinkEvents {
-    val statuses = CopyOnWriteArrayList<Pair<LinkStatus, String?>>()
+fun awaitCondition(what: String, timeoutMs: Long, describe: () -> String = { "" }, condition: () -> Boolean) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (!condition()) {
+        if (System.currentTimeMillis() > deadline) {
+            throw AssertionError("Timed out waiting for $what. ${describe()}")
+        }
+        Thread.sleep(10)
+    }
+}
+
+/** Records the events of one direction (files a phone sends, or files it receives). */
+class RecordingEvents : SessionEvents {
     val finished = CopyOnWriteArrayList<FinishedFile>()
     val progress = CopyOnWriteArrayList<FileProgress>()
 
@@ -171,28 +181,12 @@ class RecordingEvents : LinkEvents {
     @Volatile
     var batchesStarted = 0
 
-    @Volatile
-    var peerName: String? = null
-
-    @Volatile
-    var maxBytesPerSecond = 0L
-
-    override fun onLinkStatus(status: LinkStatus, detail: String?) {
-        statuses.add(status to detail)
-        if (status == LinkStatus.READY) {
-            peerName = detail
-        }
-    }
-
     override fun onBatchStarted(fileCount: Int, totalBytes: Long) {
         batchesStarted++
     }
 
     override fun onProgress(progress: FileProgress) {
         this.progress.add(progress)
-        if (progress.bytesPerSecond > maxBytesPerSecond) {
-            maxBytesPerSecond = progress.bytesPerSecond
-        }
     }
 
     override fun onFileFinished(index: Int, name: String, state: FileState, message: String?, location: String?) {
@@ -203,28 +197,75 @@ class RecordingEvents : LinkEvents {
         batchesFinished++
     }
 
-    fun readyCount(): Int = statuses.count { it.first == LinkStatus.READY }
-
-    fun awaitReady(timeoutMs: Long = 10_000, count: Int = 1) {
-        await("link READY #$count", timeoutMs) { readyCount() >= count }
-    }
+    fun summary(): String = finished.map { it.name + ":" + it.state + ":" + it.message }.toString()
 
     fun awaitFinished(count: Int, timeoutMs: Long = 30_000) {
-        await("$count finished files (have ${finished.size})", timeoutMs) { finished.size >= count }
+        awaitCondition("$count finished files (have ${finished.size})", timeoutMs, { summary() }) { finished.size >= count }
     }
 
     fun await(what: String, timeoutMs: Long, condition: () -> Boolean) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (!condition()) {
-            if (System.currentTimeMillis() > deadline) {
-                throw AssertionError("Timed out waiting for $what. statuses=$statuses finished=${finished.map { it.name + ":" + it.state + ":" + it.message }}")
-            }
-            Thread.sleep(10)
-        }
+        awaitCondition(what, timeoutMs, { summary() }, condition)
     }
 }
 
-/** TCP proxy that flips one bit of the sender->receiver stream to prove that corruption is detected. */
+class ChannelEvent(val direction: ChannelDirection, val ready: Boolean, val peer: String?, val detail: String?)
+
+class RecordingLink : LinkListener {
+    val channels = CopyOnWriteArrayList<ChannelEvent>()
+    val failures = CopyOnWriteArrayList<String>()
+
+    @Volatile
+    var listening = false
+
+    @Volatile
+    var unreachable = 0
+
+    override fun onListening() {
+        listening = true
+    }
+
+    override fun onChannel(direction: ChannelDirection, ready: Boolean, peerName: String?, detail: String?) {
+        channels.add(ChannelEvent(direction, ready, peerName, detail))
+    }
+
+    override fun onHostUnreachable() {
+        unreachable++
+    }
+
+    override fun onFailed(detail: String) {
+        failures.add(detail)
+    }
+
+    fun readyCount(direction: ChannelDirection): Int = channels.count { it.direction == direction && it.ready }
+
+    fun peerName(direction: ChannelDirection): String? =
+        channels.lastOrNull { it.direction == direction && it.ready }?.peer
+
+    fun await(what: String, timeoutMs: Long = 10_000, condition: () -> Boolean) {
+        awaitCondition(what, timeoutMs, { channels.map { it.direction.toString() + (if (it.ready) "+" else "-") + it.detail }.toString() }, condition)
+    }
+
+    fun awaitReady(direction: ChannelDirection, count: Int = 1, timeoutMs: Long = 10_000) {
+        await("$direction channel ready #$count", timeoutMs) { readyCount(direction) >= count }
+    }
+}
+
+/** One phone of a test: its own storage folder, its own events, its own link. */
+class Phone(val name: String, val dir: File, tuning: Tuning) {
+    /** Files this phone sends. */
+    val sent = RecordingEvents()
+
+    /** Files this phone receives. */
+    val received = RecordingEvents()
+    val link = RecordingLink()
+    val sinks = DirSinks(dir)
+    val duplex = DuplexLink(name, tuning, sinks, sent, received, link)
+}
+
+/**
+ * TCP proxy that flips one bit in the client->server stream of EVERY connection at [flipAtByte].
+ * Only the connection that carries file data is long enough to be hit (a link has two connections).
+ */
 class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long) : Closeable {
     private val server = ServerSocket(0)
     val port: Int get() = server.localPort
@@ -232,10 +273,12 @@ class CorruptingProxy(private val targetPort: Int, private val flipAtByte: Long)
     init {
         val t = Thread {
             try {
-                val client = server.accept()
-                val upstream = Socket("127.0.0.1", targetPort)
-                pump(client, upstream, flipAtByte)
-                pump(upstream, client, -1)
+                while (true) {
+                    val client = server.accept()
+                    val upstream = Socket("127.0.0.1", targetPort)
+                    pump(client, upstream, flipAtByte)
+                    pump(upstream, client, -1)
+                }
             } catch (_: Exception) {
             }
         }

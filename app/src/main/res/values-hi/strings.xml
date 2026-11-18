@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WifiP2P</string>
-    <string name="share_label">WifiP2P से भेजें</string>
 
     <!-- Home -->
     <string name="main_subtitle">Wi-Fi Direct से दो फ़ोन के बीच तेज़ फ़ाइल ट्रांसफ़र। इंटरनेट या मोबाइल डेटा की ज़रूरत नहीं।</string>
     <string name="send_files">फ़ाइलें भेजें</string>
-    <string name="receive_files">फ़ाइलें पाएँ</string>
     <string name="setup_title">शुरू करने से पहले</string>
     <string name="check_permission_ok">अनुमतियाँ मिल गई हैं</string>
     <string name="check_permission_missing">आस-पास के डिवाइस खोजने के लिए अनुमति चाहिए</string>
@@ -35,25 +33,10 @@
     <string name="banner_location_off">लोकेशन बंद है। आस-पास के फ़ोन खोजने के लिए Android को इसकी ज़रूरत है।</string>
 
     <!-- Send screen -->
-    <string name="send_title">फ़ाइलें भेजें</string>
-    <string name="send_status_wifi_off">Wi-Fi बंद है</string>
-    <string name="send_detail_wifi_off">पाने वाला फ़ोन खोजने के लिए Wi-Fi चालू करें।</string>
-    <string name="send_status_ready">पाने वाला फ़ोन खोजें</string>
-    <string name="send_detail_ready">पक्का करें कि दूसरा फ़ोन “फ़ाइलें पाएँ” पर है, फिर खोजें दबाएँ।</string>
-    <string name="send_detail_searching">आस-पास के फ़ोन खोजे जा रहे हैं…</string>
-    <string name="send_status_connecting">%1$s से जुड़ रहा है…</string>
-    <string name="send_detail_connecting">अगर दूसरे फ़ोन पर पूछा जाए तो निमंत्रण स्वीकार करें।</string>
-    <string name="send_detail_connected">भेजने के लिए फ़ाइलें चुनें।</string>
-    <string name="send_detail_shared">%1$d शेयर की गई फ़ाइल(ें) अभी भेजी जाएँगी।</string>
-    <string name="send_detail_preparing">Wi-Fi Direct शुरू हो रहा है…</string>
     <string name="search_devices">डिवाइस खोजें</string>
     <string name="searching">खोज रहा है…</string>
     <string name="disconnect">डिस्कनेक्ट करें</string>
-    <string name="choose_files">भेजने के लिए फ़ाइलें चुनें</string>
-    <string name="empty_peers">अभी कोई फ़ोन नहीं मिला।\nदूसरे फ़ोन पर “फ़ाइलें पाएँ” खोलें, फिर खोजें दबाएँ।</string>
     <string name="empty_searching">फ़ोन खोजे जा रहे हैं…</string>
-    <string name="empty_connecting">दूसरे फ़ोन के स्वीकार करने का इंतज़ार…</string>
-    <string name="empty_send_connected">जुड़ गया। नीचे “भेजने के लिए फ़ाइलें चुनें” दबाएँ।</string>
     <string name="connect">जुड़ें</string>
     <string name="peer_available">उपलब्ध</string>
     <string name="peer_connected">जुड़ा हुआ</string>
@@ -62,21 +45,11 @@
     <string name="peer_unavailable">उपलब्ध नहीं</string>
 
     <!-- Receive screen -->
-    <string name="receive_title">फ़ाइलें पाएँ</string>
-    <string name="receive_status_wifi_off">Wi-Fi बंद है</string>
-    <string name="receive_detail_wifi_off">फ़ाइलें पाने के लिए Wi-Fi चालू करें।</string>
-    <string name="receive_status_ready">फ़ाइलें पाने के लिए तैयार</string>
-    <string name="receive_detail_ready">भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, “%1$s” खोजें और उस पर टैप करें। यहाँ निमंत्रण स्वीकार करें।</string>
-    <string name="receive_detail_preparing">अनुकूल Wi-Fi Direct कनेक्शन पॉइंट बन रहा है…</string>
-    <string name="receive_detail_connected">फ़ाइलों का इंतज़ार है। ये Downloads/WifiP2P में सेव होंगी।</string>
-    <string name="receive_empty">मिली हुई फ़ाइलें यहाँ दिखेंगी।\nये Downloads/WifiP2P में सेव होती हैं।</string>
     <string name="mode_fast">तेज़ मोड: 5 GHz बैंड</string>
     <string name="mode_standard">सामान्य मोड (5 GHz बैंड उपलब्ध नहीं था)</string>
     <string name="mode_compat">कम्पैटिबिलिटी मोड (डिफ़ॉल्ट बैंड, पुराने फ़ोन के साथ चलता है)</string>
     <string name="mode_switch_to_compat">कम्पैटिबिलिटी मोड इस्तेमाल करें</string>
     <string name="mode_switch_to_fast">तेज़ 5 GHz मोड इस्तेमाल करें</string>
-    <string name="open_folder">फ़ोल्डर खोलें</string>
-    <string name="stop_receiving">रोकें</string>
     <string name="no_app_to_open">इसे खोलने के लिए कोई ऐप नहीं मिला।</string>
 
     <!-- Transfer progress -->
@@ -118,9 +91,56 @@
     <string name="notification_title_send">फ़ाइलें भेजी जा रही हैं</string>
     <string name="notification_title_receive">फ़ाइलें मिल रही हैं</string>
     <string name="notification_connected">%1$s से जुड़ा है</string>
-    <string name="notification_ready_send">पाने वाला फ़ोन खोजा जा रहा है</string>
-    <string name="notification_ready_receive">भेजने वाले का इंतज़ार है</string>
     <string name="notification_preparing">तैयार हो रहा है…</string>
     <string name="notification_progress">फ़ाइल %1$d / %2$d • %3$s • %4$s बाकी</string>
     <string name="notification_stop">रोकें</string>
+    <string name="camera_failed">कैमरा शुरू नहीं हो सका।</string>
+    <string name="camera_permission_denied">QR कोड स्कैन करने के लिए कैमरा की अनुमति चाहिए।</string>
+    <string name="clear">हटाएँ</string>
+    <string name="detail_connected">भेजने के लिए फ़ाइलें चुनें, या दूसरे फ़ोन से फ़ाइलों का इंतज़ार करें। दोनों दिशाएँ एक साथ चलती हैं।</string>
+    <string name="detail_connecting">अगर दूसरे फ़ोन पर पूछा जाए तो निमंत्रण स्वीकार करें।</string>
+    <string name="detail_host_preparing">QR कोड के लिए तेज़ Wi-Fi Direct नेटवर्क बन रहा है…</string>
+    <string name="detail_host_ready">यह QR कोड दूसरे फ़ोन से स्कैन कराएँ (दूसरे फ़ोन के होम स्क्रीन पर “QR कोड स्कैन करें”)।</string>
+    <string name="detail_join_preparing">Wi-Fi Direct शुरू हो रहा है…</string>
+    <string name="detail_join_ready">दूसरे फ़ोन पर दिख रहा QR कोड स्कैन करें। या “फ़ोन खोजें” इस्तेमाल करें।</string>
+    <string name="detail_joining_qr">दूसरे फ़ोन के नेटवर्क से जुड़ रहे हैं। Android एक बार पुष्टि माँग सकता है।</string>
+    <string name="detail_searching">आस-पास के फ़ोन खोजे जा रहे हैं…</string>
+    <string name="detail_wifi_off">जारी रखने के लिए Wi-Fi चालू करें।</string>
+    <string name="empty_host_no_qr">यह फ़ोन अभी नेटवर्क की जानकारी नहीं दे पा रहा। “डिस्कनेक्ट करें” दबाकर फिर शुरू करें, या Wi-Fi बंद करके चालू करें।</string>
+    <string name="empty_join">अभी कोई फ़ोन नहीं मिला। पक्का करें कि दूसरे फ़ोन पर QR कोड दिख रहा है।</string>
+    <string name="host_title">QR कोड दिखाएँ</string>
+    <string name="join_title">फ़ोन से जुड़ें</string>
+    <string name="label_receiving">पा रहा है</string>
+    <string name="label_sending">भेज रहा है</string>
+    <string name="msg_join_failed">नेटवर्क से नहीं जुड़ पाए। QR कोड जाँचें और फिर कोशिश करें।</string>
+    <string name="msg_qr_invalid">यह WifiP2P का QR कोड नहीं है।</string>
+    <string name="msg_qr_needs_android10">QR कोड स्कैन करने के लिए Android 10 या नया वर्ज़न चाहिए। “फ़ोन खोजें” इस्तेमाल करें।</string>
+    <string name="msg_shared_waiting">%1$d फ़ाइल(ें) फ़ोन जुड़ते ही भेजी जाएँगी।</string>
+    <string name="msg_wifi_lost">दूसरे फ़ोन से कनेक्शन टूट गया।</string>
+    <string name="notification_ready_host">दूसरे फ़ोन के QR कोड स्कैन करने का इंतज़ार</string>
+    <string name="notification_ready_join">नेटवर्क से जुड़ा है, दूसरे फ़ोन का इंतज़ार</string>
+    <string name="notification_title_both">फ़ाइलें भेजी और पाई जा रही हैं</string>
+    <string name="notification_title_idle">फ़ाइल ट्रांसफ़र</string>
+    <string name="qr_caption">दूसरे फ़ोन पर WifiP2P से यह कोड स्कैन करें</string>
+    <string name="qr_content_description">इस फ़ोन से जुड़ने के लिए QR कोड</string>
+    <string name="qr_network">नेटवर्क: %1$s</string>
+    <string name="scan_instruction">दूसरे फ़ोन के QR कोड पर कैमरा रखें</string>
+    <string name="scan_qr">QR कोड स्कैन करें</string>
+    <string name="scan_qr_hint">जिस फ़ोन ने कोड नहीं दिखाया, उस पर इसे इस्तेमाल करें: तुरंत जुड़ जाता है, खोजना नहीं पड़ता।</string>
+    <string name="search_phones">फ़ोन खोजें</string>
+    <string name="send_waiting">कनेक्शन का इंतज़ार…</string>
+    <string name="session_empty">भेजी और पाई गई फ़ाइलें यहाँ दिखेंगी।
+मिली हुई फ़ाइलें Downloads/WifiP2P में सेव होती हैं।</string>
+    <string name="show_qr">QR कोड दिखाएँ</string>
+    <string name="show_qr_hint">जिस फ़ोन से कनेक्शन बनेगा उस पर इसे इस्तेमाल करें। दूसरा फ़ोन यह कोड स्कैन करेगा।</string>
+    <string name="status_connecting">%1$s से जुड़ रहा है…</string>
+    <string name="status_host_ready">तैयार - QR कोड दिखाएँ</string>
+    <string name="status_join_ready">तैयार - स्कैन करें या खोजें</string>
+    <string name="status_wifi_off">Wi-Fi बंद है</string>
+    <string name="subtitle_speed_ready">जुड़ा हुआ</string>
+    <plurals name="share_waiting">
+        <item quantity="one">%d फ़ाइल भेजने के लिए तैयार</item>
+        <item quantity="other">%d फ़ाइलें भेजने के लिए तैयार</item>
+    </plurals>
+    <string name="share_label">WifiP2P से भेजें</string>
 </resources>

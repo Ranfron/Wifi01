@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WifiP2P</string>
-    <string name="share_label">Send with WifiP2P</string>
 
     <!-- Home -->
     <string name="main_subtitle">Fast file transfer between two phones over Wi-Fi Direct. No internet or mobile data needed.</string>
     <string name="send_files">Send files</string>
-    <string name="receive_files">Receive files</string>
     <string name="setup_title">Before you start</string>
     <string name="check_permission_ok">Permissions granted</string>
     <string name="check_permission_missing">Permission needed to find nearby devices</string>
@@ -35,25 +33,10 @@
     <string name="banner_location_off">Location is off. Android needs it to find nearby phones.</string>
 
     <!-- Send screen -->
-    <string name="send_title">Send files</string>
-    <string name="send_status_wifi_off">Wi-Fi is off</string>
-    <string name="send_detail_wifi_off">Turn on Wi-Fi to find the receiving phone.</string>
-    <string name="send_status_ready">Find the receiving phone</string>
-    <string name="send_detail_ready">Make sure the other phone is on “Receive files”, then tap Search.</string>
-    <string name="send_detail_searching">Searching for nearby phones…</string>
-    <string name="send_status_connecting">Connecting to %1$s…</string>
-    <string name="send_detail_connecting">Accept the invitation on the other phone if it asks.</string>
-    <string name="send_detail_connected">Choose the files to send.</string>
-    <string name="send_detail_shared">%1$d shared item(s) will be sent now.</string>
-    <string name="send_detail_preparing">Starting Wi-Fi Direct…</string>
     <string name="search_devices">Search devices</string>
     <string name="searching">Searching…</string>
     <string name="disconnect">Disconnect</string>
-    <string name="choose_files">Choose files to send</string>
-    <string name="empty_peers">No phones found yet.\nOn the other phone open “Receive files”, then tap Search.</string>
     <string name="empty_searching">Looking for phones…</string>
-    <string name="empty_connecting">Waiting for the other phone to accept…</string>
-    <string name="empty_send_connected">Connected. Tap “Choose files to send” below.</string>
     <string name="connect">Connect</string>
     <string name="peer_available">Available</string>
     <string name="peer_connected">Connected</string>
@@ -62,21 +45,11 @@
     <string name="peer_unavailable">Unavailable</string>
 
     <!-- Receive screen -->
-    <string name="receive_title">Receive files</string>
-    <string name="receive_status_wifi_off">Wi-Fi is off</string>
-    <string name="receive_detail_wifi_off">Turn on Wi-Fi to receive files.</string>
-    <string name="receive_status_ready">Ready to receive</string>
-    <string name="receive_detail_ready">On the sending phone open “Send files”, search for “%1$s” and tap it. Accept the invitation here.</string>
-    <string name="receive_detail_preparing">Preparing a compatible Wi-Fi Direct connection point…</string>
-    <string name="receive_detail_connected">Waiting for files. They are saved in Downloads/WifiP2P.</string>
-    <string name="receive_empty">Received files appear here.\nThey are saved in Downloads/WifiP2P.</string>
     <string name="mode_fast">Fast mode: 5 GHz band</string>
     <string name="mode_standard">Standard mode (the 5 GHz band was not available)</string>
     <string name="mode_compat">Compatibility mode (default band, works with older phones)</string>
     <string name="mode_switch_to_compat">Use compatibility mode</string>
     <string name="mode_switch_to_fast">Use fast 5 GHz mode</string>
-    <string name="open_folder">Open folder</string>
-    <string name="stop_receiving">Stop</string>
     <string name="no_app_to_open">No app found to open this.</string>
 
     <!-- Transfer progress -->
@@ -118,9 +91,56 @@
     <string name="notification_title_send">Sending files</string>
     <string name="notification_title_receive">Receiving files</string>
     <string name="notification_connected">Connected to %1$s</string>
-    <string name="notification_ready_send">Looking for the receiving phone</string>
-    <string name="notification_ready_receive">Waiting for the sender</string>
     <string name="notification_preparing">Getting ready…</string>
     <string name="notification_progress">File %1$d of %2$d • %3$s • %4$s left</string>
     <string name="notification_stop">Stop</string>
+    <string name="camera_failed">The camera could not be started.</string>
+    <string name="camera_permission_denied">The camera permission is needed to scan the QR code.</string>
+    <string name="clear">Clear</string>
+    <string name="detail_connected">Pick files to send, or wait for files from the other phone. Both directions work at the same time.</string>
+    <string name="detail_connecting">Accept the invitation on the other phone if it asks.</string>
+    <string name="detail_host_preparing">Creating a fast Wi-Fi Direct network for the QR code…</string>
+    <string name="detail_host_ready">Let the other phone scan this QR code (Scan QR code on its home screen).</string>
+    <string name="detail_join_preparing">Starting Wi-Fi Direct…</string>
+    <string name="detail_join_ready">Scan the QR code shown on the other phone. Or use “Search phones”.</string>
+    <string name="detail_joining_qr">Joining the other phone’s network. Android may ask you to confirm once.</string>
+    <string name="detail_searching">Searching for nearby phones…</string>
+    <string name="detail_wifi_off">Turn on Wi-Fi to continue.</string>
+    <string name="empty_host_no_qr">This phone cannot share its network details right now. Tap “Disconnect” to start again, or switch Wi-Fi off and on.</string>
+    <string name="empty_join">No phones found yet. Make sure the other phone shows its QR code.</string>
+    <string name="host_title">Show QR code</string>
+    <string name="join_title">Connect to a phone</string>
+    <string name="label_receiving">Receiving</string>
+    <string name="label_sending">Sending</string>
+    <string name="msg_join_failed">Could not join the network. Check the QR code and try again.</string>
+    <string name="msg_qr_invalid">This is not a WifiP2P QR code.</string>
+    <string name="msg_qr_needs_android10">Scanning the QR code needs Android 10 or newer. Use “Search phones” instead.</string>
+    <string name="msg_shared_waiting">%1$d file(s) will be sent as soon as the phones are connected.</string>
+    <string name="msg_wifi_lost">The connection to the other phone was lost.</string>
+    <string name="notification_ready_host">Waiting for the other phone to scan the QR code</string>
+    <string name="notification_ready_join">Connected to the network, waiting for the other phone</string>
+    <string name="notification_title_both">Sending and receiving files</string>
+    <string name="notification_title_idle">File transfer</string>
+    <string name="qr_caption">Scan this code with WifiP2P on the other phone</string>
+    <string name="qr_content_description">QR code to join this phone</string>
+    <string name="qr_network">Network: %1$s</string>
+    <string name="scan_instruction">Point the camera at the QR code on the other phone</string>
+    <string name="scan_qr">Scan QR code</string>
+    <string name="scan_qr_hint">Use this on the phone that did not show the code: it joins instantly, no search needed.</string>
+    <string name="search_phones">Search for phones instead</string>
+    <string name="send_waiting">Waiting for connection…</string>
+    <string name="session_empty">Files you send and receive appear here.
+Received files are saved in Downloads/WifiP2P.</string>
+    <string name="show_qr">Show QR code</string>
+    <string name="show_qr_hint">Use this on the phone that will receive the connection. The other phone scans this code.</string>
+    <string name="status_connecting">Connecting to %1$s…</string>
+    <string name="status_host_ready">Ready - show the QR code</string>
+    <string name="status_join_ready">Ready - scan or search</string>
+    <string name="status_wifi_off">Wi-Fi is off</string>
+    <string name="subtitle_speed_ready">Connected</string>
+    <plurals name="share_waiting">
+        <item quantity="one">%d file waiting to be sent</item>
+        <item quantity="other">%d files waiting to be sent</item>
+    </plurals>
+    <string name="share_label">Send with WifiP2P</string>
 </resources>

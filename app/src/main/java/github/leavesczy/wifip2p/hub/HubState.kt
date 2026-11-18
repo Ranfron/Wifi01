@@ -3,7 +3,14 @@ package github.leavesczy.wifip2p.hub
 import github.leavesczy.wifip2p.p2p.P2pPeer
 import github.leavesczy.wifip2p.transfer.FileState
 
-enum class Mode { NONE, SEND, RECEIVE }
+/**
+ * HOST: this phone creates the Wi-Fi Direct group and shows the QR code (or waits to be found).
+ * JOIN: this phone connects to the host - by scanning its QR code or by searching for it.
+ * After connecting both roles are equal: both phones send and receive.
+ */
+enum class Role { NONE, HOST, JOIN }
+
+enum class JoinMethod { NONE, QR, SEARCH }
 
 /** What the screen should tell the user right now. */
 enum class Phase {
@@ -12,16 +19,16 @@ enum class Phase {
     /** Wi-Fi (and therefore Wi-Fi Direct) is switched off. */
     P2P_OFF,
 
-    /** Receiver: creating the group. Sender: waiting for the Wi-Fi Direct service. */
+    /** Host: creating the group / the QR code. Join: waiting for the Wi-Fi Direct service. */
     PREPARING,
 
-    /** Receiver: group is up, waiting for the sender. Sender: ready to search / pick a device. */
+    /** Host: group is up, waiting for the other phone. Join: ready to scan or search. */
     READY,
 
-    /** Sender: invitation sent / group joined, the app connection is being established. */
+    /** Join: joining the group / waiting for the invitation, the app connection is being established. */
     CONNECTING,
 
-    /** Both apps talk to each other - files can flow. */
+    /** Both apps talk to each other - files can flow in both directions. */
     CONNECTED,
     ERROR
 }
@@ -57,23 +64,39 @@ data class ActiveTransfer(
 /** One-shot message for a Snackbar. The id changes with every message so equal texts show again. */
 data class UiMessage(val id: Long, val text: String)
 
+/** The QR code of a hosting phone: [payload] is what gets encoded, [ssid] is shown below it. */
+data class QrInfo(val payload: String, val ssid: String)
+
 data class HubState(
-    val mode: Mode = Mode.NONE,
+    val role: Role = Role.NONE,
     val phase: Phase = Phase.IDLE,
     val detail: String? = null,
     val selfName: String = "",
     val peers: List<P2pPeer> = emptyList(),
     val discovering: Boolean = false,
+    val joinMethod: JoinMethod = JoinMethod.NONE,
     val connectingTo: String? = null,
     val peerName: String? = null,
+    /** This phone can send files right now / is able to receive files right now. */
+    val sendReady: Boolean = false,
+    val receiveReady: Boolean = false,
     val items: List<TransferItem> = emptyList(),
-    val active: ActiveTransfer? = null,
+    val activeOut: ActiveTransfer? = null,
+    val activeIn: ActiveTransfer? = null,
     val message: UiMessage? = null,
+    val qr: QrInfo? = null,
+    /** The group exists but this phone does not reveal its passphrase, so no QR code can be shown. */
+    val qrUnavailable: Boolean = false,
     /** The user's choice: ask for a 5 GHz group (fast) instead of the default band. */
-    val fastMode: Boolean = false,
+    val fastMode: Boolean = true,
     /** The group really was created on the 5 GHz band. */
-    val fiveGhz: Boolean = false
+    val fiveGhz: Boolean = false,
+    /** Number of files shared from another app that wait for a connection. */
+    val pendingShare: Int = 0
 )
 
 val TransferItem.isFinished: Boolean
     get() = state == FileState.DONE || state == FileState.FAILED || state == FileState.CANCELLED
+
+val HubState.transferring: Boolean
+    get() = activeOut != null || activeIn != null

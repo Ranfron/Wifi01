@@ -23,7 +23,11 @@ data class Tuning(
     val stallTimeoutMs: Int = 30_000,
     /** How long the sender waits for the receiver to confirm a file (receiver may still be flushing to disk). */
     val ackTimeoutMs: Long = 60_000,
-    val progressIntervalMs: Long = 100
+    val progressIntervalMs: Long = 100,
+    /** A second phone may only take over after the first one has been gone for this long. */
+    val admissionIdleMs: Long = 10_000,
+    /** After this many failed connection attempts the guest tells the user that the host cannot be reached. */
+    val unreachableAfterAttempts: Int = 12
 )
 
 class CancelledException(message: String = "Cancelled") : IOException(message)

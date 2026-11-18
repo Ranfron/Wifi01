@@ -38,6 +38,13 @@ object Protocol {
     const val TYPE_FILE_ACK = 6
     const val TYPE_BATCH_END = 7
 
+    /** The role the other side must have on the same connection. */
+    fun complementOf(role: Int): Int? = when (role) {
+        ROLE_SENDER -> ROLE_RECEIVER
+        ROLE_RECEIVER -> ROLE_SENDER
+        else -> null
+    }
+
     const val MAX_PAYLOAD = 64 * 1024
     const val MAX_FILES_PER_BATCH = 1_000_000
     const val MAX_NAME_CHARS = 255

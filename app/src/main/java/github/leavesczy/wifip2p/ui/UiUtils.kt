@@ -18,3 +18,7 @@ fun View.applySystemBarPadding() {
         insets
     }
 }
+
+/** Whether the view is currently VISIBLE (androidx.core.view.isVisible equivalent). */
+val View.isVisible: Boolean
+    get() = visibility == View.VISIBLE

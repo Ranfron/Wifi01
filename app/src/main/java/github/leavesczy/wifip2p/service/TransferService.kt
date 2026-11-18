@@ -17,12 +17,11 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.hub.HubState
-import github.leavesczy.wifip2p.hub.Mode
 import github.leavesczy.wifip2p.hub.Phase
-import github.leavesczy.wifip2p.transferHub
+import github.leavesczy.wifip2p.hub.Role
 import github.leavesczy.wifip2p.transfer.Formatters
-import github.leavesczy.wifip2p.ui.receive.ReceiveActivity
-import github.leavesczy.wifip2p.ui.send.SendActivity
+import github.leavesczy.wifip2p.transferHub
+import github.leavesczy.wifip2p.ui.SessionActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -60,7 +59,7 @@ class TransferService : Service() {
                 .distinctUntilChanged()
                 .conflate()
                 .collect { model ->
-                    if (model.mode == Mode.NONE) {
+                    if (model.role == Role.NONE) {
                         stopSelf()
                     } else {
                         getSystemService(NotificationManager::class.java)
@@ -116,10 +115,10 @@ class TransferService : Service() {
     }
 
     private fun buildNotification(model: NotificationModel): Notification {
-        val target = if (model.mode == Mode.RECEIVE) ReceiveActivity::class.java else SendActivity::class.java
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, target).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            Intent(this, SessionActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val stop = PendingIntent.getService(
@@ -211,7 +210,7 @@ class TransferService : Service() {
 
 /** Everything the notification shows; a data class so unchanged states are not re-posted. */
 private data class NotificationModel(
-    val mode: Mode,
+    val role: Role,
     val title: String,
     val text: String,
     /** 0..1000, or -1 for "no progress bar". */
@@ -219,33 +218,37 @@ private data class NotificationModel(
 ) {
     companion object {
         fun from(context: Context, state: HubState): NotificationModel {
-            val sending = state.mode == Mode.SEND
-            val title = context.getString(if (sending) R.string.notification_title_send else R.string.notification_title_receive)
-            val active = state.active
-            if (active != null) {
-                val permille = if (active.batchTotal > 0) {
-                    (active.batchBytes * 1000 / active.batchTotal).toInt().coerceIn(0, 1000)
-                } else {
-                    0
-                }
+            val out = state.activeOut
+            val incoming = state.activeIn
+            if (out != null || incoming != null) {
+                val title = context.getString(
+                    when {
+                        out != null && incoming != null -> R.string.notification_title_both
+                        out != null -> R.string.notification_title_send
+                        else -> R.string.notification_title_receive
+                    }
+                )
+                val speed = (out?.bytesPerSecond ?: 0L) + (incoming?.bytesPerSecond ?: 0L)
+                val done = (out?.batchBytes ?: 0L) + (incoming?.batchBytes ?: 0L)
+                val total = (out?.batchTotal ?: 0L) + (incoming?.batchTotal ?: 0L)
+                val permille = if (total > 0) (done * 1000 / total).toInt().coerceIn(0, 1000) else 0
                 val text = context.getString(
                     R.string.notification_progress,
-                    active.fileNumber, active.fileCount,
-                    Formatters.speed(active.bytesPerSecond),
-                    Formatters.duration(active.etaSeconds)
+                    Formatters.speed(speed), Formatters.duration(Formatters.etaSeconds(total - done, speed))
                 )
-                return NotificationModel(state.mode, title, text, permille)
+                return NotificationModel(state.role, title, text, permille)
             }
+            val title = context.getString(R.string.notification_title_idle)
             val text = when (state.phase) {
                 Phase.CONNECTED -> context.getString(R.string.notification_connected, state.peerName ?: "")
                 Phase.READY -> context.getString(
-                    if (sending) R.string.notification_ready_send else R.string.notification_ready_receive
+                    if (state.role == Role.HOST) R.string.notification_ready_host else R.string.notification_ready_join
                 )
 
                 Phase.ERROR -> state.detail ?: context.getString(R.string.error_connection_lost)
                 else -> context.getString(R.string.notification_preparing)
             }
-            return NotificationModel(state.mode, title, text, -1)
+            return NotificationModel(state.role, title, text, -1)
         }
     }
 }

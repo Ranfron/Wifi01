@@ -7,12 +7,20 @@
         android:name="android.hardware.wifi.direct"
         android:required="true" />
 
+    <!-- The QR code is scanned with the camera (optional: the phone can still search for devices without it) -->
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
+
     <!-- TCP sockets (also on the local Wi-Fi Direct network) need INTERNET -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+    <!-- Scanning the QR code -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Wi-Fi Direct discovery: Location on Android 12L and older, NEARBY_WIFI_DEVICES on 13+ -->
     <uses-permission
@@ -48,9 +56,11 @@
         android:theme="@style/Theme.WifiP2P"
         tools:ignore="DataExtractionRules">
 
+        <!-- Home: show the QR code, scan a QR code, or search. -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true">
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -58,9 +68,18 @@
             </intent-filter>
         </activity>
 
-        <!-- Sender screen. Also appears in the system "Share" sheet. -->
+        <!-- Full-screen QR scanner. -->
         <activity
-            android:name=".ui.send.SendActivity"
+            android:name=".ui.ScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!--
+          Both roles: the host shows the QR code, the other phone joins. Also the target of the
+          system Share sheet ("Send with WifiP2P"): shared files wait until the phones are connected.
+        -->
+        <activity
+            android:name=".ui.SessionActivity"
             android:exported="true"
             android:label="@string/share_label"
             android:launchMode="singleTop">
@@ -79,11 +98,6 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".ui.receive.ReceiveActivity"
-            android:exported="false"
-            android:launchMode="singleTop" />
 
         <service
             android:name=".service.TransferService"

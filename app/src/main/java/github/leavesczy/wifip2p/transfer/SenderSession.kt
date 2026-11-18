@@ -26,12 +26,11 @@ internal fun describeError(t: Throwable): String {
 }
 
 /**
- * Sender half of one TCP connection. Long-lived: after [handshake] any number of batches can be
+ * Sender half of one TCP connection. Long-lived: after [start] any number of batches can be
  * sent with [sendBatch]. A background reader notices immediately when the other side goes away.
  */
 class SenderSession(
     private val socket: Socket,
-    private val deviceName: String,
     private val tuning: Tuning,
     private val events: SessionEvents
 ) : Closeable {
@@ -56,18 +55,10 @@ class SenderSession(
     val isClosed: Boolean
         get() = closed.get()
 
-    @Throws(IOException::class)
-    fun handshake(): Hello {
-        socket.soTimeout = tuning.handshakeTimeoutMs
-        FrameIO.write(output, Hello(Protocol.ROLE_SENDER, deviceName).toFrame())
-        val peer = Hello.parse(FrameIO.read(input))
-        if (peer.role != Protocol.ROLE_RECEIVER) {
-            throw ProtocolException("The other device is also in Send mode")
-        }
-        socket.soTimeout = 0
+    /** Starts the background reader and the stall watchdog. The HELLO exchange is already done. */
+    fun start() {
         startReader()
         startWatchdog()
-        return peer
     }
 
     /** Blocks until the connection is gone. */

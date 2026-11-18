@@ -1,38 +1,45 @@
-package github.leavesczy.wifip2p
+package github.leavesczy.wifip2p.ui
 
-import android.content.Intent
+import github.leavesczy.wifip2p.transferHub
+
 import android.os.Build
 import android.os.Bundle
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.databinding.ActivityMainBinding
-import github.leavesczy.wifip2p.ui.applySystemBarPadding
-import github.leavesczy.wifip2p.ui.receive.ReceiveActivity
-import github.leavesczy.wifip2p.ui.send.SendActivity
-import github.leavesczy.wifip2p.ui.show
+import github.leavesczy.wifip2p.hub.Role
 import github.leavesczy.wifip2p.util.PermissionFlow
 import github.leavesczy.wifip2p.util.Permissions
 import github.leavesczy.wifip2p.util.SystemChecks
 
+/**
+ * Home screen. Both phones start here: one shows a QR code, the other scans it. Files can then be
+ * sent in both directions. If a file was shared from another app, this screen tells the user that
+ * it waits for a connection.
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var pendingTarget: Class<*>? = null
+    private var pendingRole: Role? = null
+    private var pendingSearch = false
 
     private val permissionFlow = PermissionFlow(
         activity = this,
         onGranted = {
             refreshChecks()
-            val target = pendingTarget
-            pendingTarget = null
-            if (target != null) {
-                startActivity(Intent(this, target))
+            val role = pendingRole
+            val search = pendingSearch
+            pendingRole = null
+            pendingSearch = false
+            if (role != null) {
+                SessionActivity.start(this, role, startSearch = search)
             }
         },
         onDenied = {
-            pendingTarget = null
+            pendingRole = null
             refreshChecks()
         }
     )
@@ -44,8 +51,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         binding.root.applySystemBarPadding()
 
-        binding.btnSend.setOnClickListener { open(SendActivity::class.java) }
-        binding.btnReceive.setOnClickListener { open(ReceiveActivity::class.java) }
+        binding.btnShowQr.setOnClickListener { open(Role.HOST) }
+        binding.btnScanQr.setOnClickListener { open(Role.JOIN) }
+        binding.btnSearchPhones.setOnClickListener { open(Role.JOIN, search = true) }
+        binding.btnClearShare.setOnClickListener { transferHub().clearPendingShare(); refreshChecks() }
         binding.btnGrantPermission.setOnClickListener { permissionFlow.ensure() }
         binding.btnWifiSettings.setOnClickListener { SystemChecks.openWifiSettings(this) }
         binding.btnLocationSettings.setOnClickListener { SystemChecks.openLocationSettings(this) }
@@ -56,12 +65,17 @@ class MainActivity : AppCompatActivity() {
         refreshChecks()
     }
 
-    private fun open(target: Class<*>) {
-        pendingTarget = target
+    private fun open(role: Role, search: Boolean = false) {
+        pendingRole = role
+        pendingSearch = search
         permissionFlow.ensure()
     }
 
     private fun refreshChecks() {
+        val pending = transferHub().state.value.pendingShare
+        binding.cardShare.show(pending > 0)
+        binding.tvShareInfo.text = resources.getQuantityString(R.plurals.share_waiting, pending, pending)
+
         val permissionsOk = Permissions.hasAll(this)
         showCheck(
             binding.ivPermission, binding.tvPermission, permissionsOk,

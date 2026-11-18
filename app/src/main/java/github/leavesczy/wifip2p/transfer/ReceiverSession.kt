@@ -15,7 +15,6 @@ import java.util.zip.CRC32
  */
 class ReceiverSession(
     private val socket: Socket,
-    private val deviceName: String,
     private val sinks: SinkFactory,
     private val tuning: Tuning,
     private val events: SessionEvents
@@ -32,18 +31,6 @@ class ReceiverSession(
     private var batchFilesSeen = 0
     private var meter = SpeedMeter()
     private var lastEmitNanos = 0L
-
-    @Throws(IOException::class)
-    fun handshake(): Hello {
-        socket.soTimeout = tuning.handshakeTimeoutMs
-        FrameIO.write(output, Hello(Protocol.ROLE_RECEIVER, deviceName).toFrame())
-        val peer = Hello.parse(FrameIO.read(input))
-        if (peer.role != Protocol.ROLE_SENDER) {
-            throw ProtocolException("The other device is also in Receive mode")
-        }
-        socket.soTimeout = 0
-        return peer
-    }
 
     override fun close() {
         try {
