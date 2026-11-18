@@ -438,7 +438,7 @@ class SessionActivity : AppCompatActivity() {
         }
         lastMessageId = message.id
         Snackbar.make(binding.root, message.text, Snackbar.LENGTH_SHORT)
-            .setAnchorView(if (binding.rowBottom.isVisible) binding.rowBottom else null)
+            .setAnchorView(if (binding.rowBottom.visibility == View.VISIBLE) binding.rowBottom else null)
             .show()
     }
 

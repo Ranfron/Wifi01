@@ -93,4 +93,13 @@ dependencies {
     implementation("com.google.android.material:material:1.13.0")
     // StateFlow / Dispatchers.Main (used by the transfer hub and the foreground service)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // repeatOnLifecycle / lifecycleScope (SessionActivity collects the hub state)
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    // QR code: encoder + decoder (pure Java library, works on Android 6+)
+    implementation("com.google.zxing:core:3.5.4")
+    // Camera for the QR scanner (preview + frame analysis)
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
 }
