@@ -4,8 +4,7 @@ import android.app.Application
 import android.content.Context
 import github.leavesczy.wifip2p.hub.TransferHub
 import github.leavesczy.wifip2p.service.TransferService
-import github.leavesczy.wifip2p.storage.ReceivedFolder
-import github.leavesczy.wifip2p.storage.SameFolderPublisher
+import github.leavesczy.wifip2p.storage.DownloadsMedium
 import github.leavesczy.wifip2p.storage.UriSendSource
 import github.leavesczy.wifip2p.transfer.FileIncomingStore
 import github.leavesczy.wifip2p.transfer.HistoryLog
@@ -26,7 +25,8 @@ class App : Application() {
             app = this,
             ledger = OutgoingLedger(File(filesDir, "outgoing.log")),
             history = HistoryLog(File(filesDir, "history.log")),
-            incoming = FileIncomingStore(ReceivedFolder.of(this), SameFolderPublisher())
+            // received files are written once, straight into Downloads/WifiP2P
+            incoming = FileIncomingStore(File(filesDir, "incoming-meta"), DownloadsMedium.create(this))
         )
     }
 }

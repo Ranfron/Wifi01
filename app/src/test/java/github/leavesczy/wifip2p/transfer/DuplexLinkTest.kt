@@ -158,7 +158,7 @@ class DuplexLinkTest {
         guest.sent.awaitFinished(2, 10_000)
         assertTrue(guest.sent.finished.all { it.state == FileState.CANCELLED })
         host.received.await("partial upload kept", 10_000) { host.store.partials().isNotEmpty() }
-        assertTrue("nothing is published before the file is complete", host.dir.listFiles()!!.isEmpty())
+        assertTrue("nothing is published before the file is complete", visibleFiles(host.dir).isEmpty())
 
         verifyDelivered(host, guest, downloads)
         assertEquals("the receive channel must not have reconnected", 1, guest.link.readyCount(ChannelDirection.RECEIVE))
@@ -180,11 +180,12 @@ class DuplexLinkTest {
         guest.received.await("receiver noticed", 10_000) { guest.received.finished.isNotEmpty() }
         assertEquals(FileState.CANCELLED, guest.received.finished.first().state)
         guest.received.await("partial download kept", 5_000) { guest.store.partials().isNotEmpty() }
-        assertTrue(guest.dir.listFiles()!!.isEmpty())
+        assertTrue(visibleFiles(guest.dir).isEmpty())
         host.sent.await("sender noticed", 10_000) { host.sent.finished.isNotEmpty() }
         assertEquals(1, guest.link.readyCount(ChannelDirection.SEND))
 
         guest.link.awaitReady(ChannelDirection.RECEIVE, count = 2)
+        host.link.awaitReady(ChannelDirection.SEND, count = 2) // the host's own send channel comes back by itself
         val small = RandomSource("again.bin", 100_000)
         assertTrue(host.duplex.send(listOf(small)))
         guest.received.await("new file", 10_000) { guest.received.finished.any { it.name == "again.bin" } }
@@ -327,9 +328,9 @@ class DuplexLinkTest {
     @Test
     fun duplicateNamesAreNotOverwritten() {
         val (host, guest) = connected()
-        guest.duplex.send(listOf(RandomSource("same.txt", 1000, seed = 1), RandomSource("same.txt", 1000, seed = 2)))
+        guest.duplex.send(listOf(RandomSource("same.txt", 1000, seed = 1, key = "same-1"), RandomSource("same.txt", 1000, seed = 2, key = "same-2")))
         host.received.awaitFinished(2)
-        assertEquals(listOf("same (1).txt", "same.txt"), host.store.publisher.committed.map { it.name }.sorted())
+        assertEquals(listOf("same (1).txt", "same.txt"), host.store.medium.completed.map { it.name }.sorted())
     }
 
     @Test
@@ -337,7 +338,7 @@ class DuplexLinkTest {
         val (host, guest) = connected()
         guest.duplex.send(listOf(MemorySource("../../../tmp/pwned.txt", "hi".toByteArray())))
         host.received.awaitFinished(1)
-        val stored = host.store.publisher.committed.single()
+        val stored = host.store.medium.completed.single()
         assertEquals("pwned.txt", stored.name)
         assertEquals(host.dir.canonicalPath, stored.parentFile.canonicalPath)
     }
@@ -403,7 +404,7 @@ class DuplexLinkTest {
         val seconds = (System.nanoTime() - started) / 1e9
         println("      300 small files in %.2f s (%.0f files/s)".format(seconds, files.size / seconds))
         assertTrue(guest.sent.finished.all { it.state == FileState.DONE })
-        assertEquals(files.size, host.store.publisher.committed.size)
+        assertEquals(files.size, host.store.medium.completed.size)
         for (i in listOf(0, 99, 299)) {
             assertEquals(files[i].sha256(), sha256(File(host.dir, files[i].name)))
         }
@@ -635,5 +636,66 @@ class DuplexLinkTest {
             host.link.await("mismatch reported", 5_000) { host.link.incompatible > 0 }
         }
         assertEquals(0, host.link.readyCount(ChannelDirection.RECEIVE))
+    }
+
+    private fun visibleFiles(dir: File): List<File> = dir.listFiles()!!.filter { !it.name.startsWith(".") }
+
+    @Test
+    fun aReceivedFileTakesItsSizeOnceAndLeavesNoPartialBehind() {
+        val (host, guest) = connected()
+        val file = RandomSource("once.bin", 6_000_000)
+        guest.duplex.send(listOf(file))
+        host.received.awaitFinished(1)
+        assertEquals(file.size, visibleFiles(host.dir).sumOf { it.length() })
+        assertTrue(host.dir.listFiles()!!.none { it.name.endsWith(".part") })
+        assertTrue(host.store.partials().isEmpty())
+    }
+
+    @Test
+    fun aFileThatIsAlreadySavedIsNotSavedTwice() {
+        val (host, guest) = connected()
+        val file = RandomSource("once-only.bin", 900_000, key = "once-key")
+        guest.duplex.send(listOf(file))
+        host.received.awaitFinished(1)
+        guest.sent.awaitFinished(1)
+        val progressBefore = guest.sent.progress.size
+        // the acknowledgement was lost: the sender does not know the file arrived, and sends it again
+        guest.duplex.send(listOf(file))
+        guest.sent.awaitFinished(2)
+        assertEquals(FileState.DONE, guest.sent.finished.last().state)
+        assertEquals("the file is saved once", 1, host.store.medium.completed.size)
+        assertEquals("no data is sent the second time", progressBefore, guest.sent.progress.size)
+    }
+
+    @Test
+    fun aResumeSurvivesARestartOfTheReceivingApp() {
+        val port = freePort()
+        val host = phone("Host-Phone")
+        host.duplex.startHost(port)
+        host.link.await("host listening") { host.link.listening }
+        val guest = phone("Guest-Phone")
+        guest.duplex.startGuest("127.0.0.1", port)
+        waitFullyConnected(host, guest)
+
+        val file = RandomSource("restart.bin", 12_000_000, throttleBytesPerSecond = 8_000_000, key = "restart-key")
+        guest.duplex.send(listOf(file))
+        host.received.await("first part stored", 15_000) { host.store.partials().any { it.stored > 2_000_000 } }
+        val stored = host.store.partials().single().stored
+        host.duplex.stop() // the receiving app is closed
+        guest.sent.awaitState("restart.bin", FileState.INTERRUPTED)
+
+        val restarted = phone("Host-Phone") // the app starts again: the same folders and the same stored part
+        restarted.duplex.startHost(port)
+        restarted.link.await("listening again") { restarted.link.listening }
+        guest.link.awaitReady(ChannelDirection.SEND, count = 2)
+        restarted.link.awaitReady(ChannelDirection.RECEIVE)
+        val before = guest.sent.progress.size
+        assertTrue(guest.duplex.send(listOf(file)))
+        guest.sent.awaitFinished(2)
+        restarted.received.awaitFinished(1)
+        assertEquals(FileState.DONE, guest.sent.finished.last().state)
+        val firstOfResume = guest.sent.progress.subList(before, guest.sent.progress.size).first()
+        assertTrue("resumed at ${firstOfResume.fileBytes}, stored $stored", firstOfResume.fileBytes >= stored)
+        assertEquals(file.sha256(), sha256(File(restarted.dir, "restart.bin")))
     }
 }

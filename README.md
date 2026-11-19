@@ -43,7 +43,7 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
   Nothing is cleaned up in the background.
 * **History**: every finished file, sent or received, with state, time and size (last 500 entries).
 
-Storage: a received file is written once, into the app's `received` folder (`Android/data/.../files/received`). An unfinished file is a hidden `.part` piece there; when it is complete it is renamed in place, so nothing is copied and no extra space is needed. Downloads/WifiP2P gets a copy only when you choose *Export to Downloads* (after a free-space check).
+Storage: every received file is written once, straight into **Downloads/WifiP2P** (MediaStore on Android 10 and newer, the Downloads folder on Android 9 and older). An unfinished file is a hidden pending entry there; when it is complete it gets its name and becomes visible. Nothing is copied, so a received file takes its size once. A file that arrives again is recognised and not saved twice.
 
 Both phones must run the same build (the version is shown on the home screen). Protocol v2 (`FILE_START` carries the resume offset and the stored part's CRC, `HEARTBEAT` frames) is not compatible with
 v1: both phones must run the same version of the app.
@@ -67,7 +67,7 @@ Toolchain is unchanged from 1.0 (AGP 9.0.0, Gradle 9.3.1, Kotlin 2.3.10, minSdk 
    The phones are connected. (Fallback without a camera: *Search phones* and tap the other phone, accept the invitation.)
 3. On **either** phone: *Send files* (any number, any type). Or share files from Gallery / Files with
    *Send with WifiP2P* - they wait on the home screen and are sent as soon as the phones are connected.
-4. Both phones see both directions live. Received files are in the app's received folder: open them from History, or export a copy to Downloads.
+4. Both phones see both directions live. Received files are in **Downloads/WifiP2P**. The app lists unfinished files and finished transfers in History.
 
 Tips for maximum speed: stay within a few metres, keep both screens on, and use phones with Android 10+ on both sides
 (5 GHz). If an old phone cannot connect to a 5 GHz group, switch the receiver to *compatibility mode* on its screen.

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Lets viewer apps open a received file (the received folder is inside the app's external files folder). -->
+<!-- Lets viewer apps open a received file on Android 9 and older (the Downloads folder). -->
 <paths>
-    <external-files-path
-        name="received"
-        path="received/" />
+    <external-path
+        name="downloads"
+        path="Download/" />
 </paths>

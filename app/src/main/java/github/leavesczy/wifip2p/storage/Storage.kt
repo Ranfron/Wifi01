@@ -5,7 +5,6 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -15,49 +14,27 @@ import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import github.leavesczy.wifip2p.transfer.FileNames
-import github.leavesczy.wifip2p.transfer.Publisher
+import github.leavesczy.wifip2p.transfer.FileMedium
+import github.leavesczy.wifip2p.transfer.Medium
 import github.leavesczy.wifip2p.transfer.SendSource
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.FilterInputStream
+import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.util.UUID
 
 internal const val DOWNLOAD_SUBFOLDER = "WifiP2P"
+private const val MAX_NAME_TRIES = 50
 
 internal fun guessMimeType(name: String): String {
     val extension = FileNames.extensionOf(name)
     val mime = if (extension.isEmpty()) null else MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
     return mime ?: "application/octet-stream"
-}
-
-/**
- * The folder for received files. An unfinished file sits in it as a `.part` piece; when it is complete it is
- * renamed inside the same folder. The bytes are written once and never copied.
- */
-object ReceivedFolder {
-    fun of(context: Context): File {
-        val base = context.getExternalFilesDir(null) ?: context.filesDir
-        return File(base, "received")
-    }
-}
-
-/**
- * Completes a received file by renaming it in its own folder: no second copy, no extra space needed.
- * Both names are in the same folder, so the rename is instant.
- */
-class SameFolderPublisher : Publisher {
-    override fun publish(part: File, name: String, mimeType: String): String? {
-        val folder = part.parentFile ?: throw IOException("No folder for the received file")
-        val target = File(folder, FileNames.unique(name) { File(folder, it).exists() })
-        if (!part.renameTo(target)) {
-            throw IOException("Cannot rename the received file")
-        }
-        return target.absolutePath
-    }
 }
 
 /**
@@ -202,55 +179,123 @@ class UriSendSource private constructor(
 }
 
 /**
- * Copies a received file into Downloads/WifiP2P when the user asks for it. The copy needs room for the whole
- * file again, so it is made only on request, after a free-space check.
+ * The Downloads/WifiP2P folder through MediaStore (Android 10 and newer). A partial file is a pending entry there:
+ * hidden from other apps until it is complete. Completing it gives it its name and clears the pending flag, so the
+ * bytes are written once and never copied.
  */
-class DownloadsPublisher(private val context: Context) : Publisher {
+class MediaStoreMedium(private val context: Context) : Medium {
 
-    override fun publish(part: File, name: String, mimeType: String): String? {
-        return if (Build.VERSION.SDK_INT >= 29) publishMediaStore(part, name, mimeType) else publishLegacy(part, name)
-    }
-
-    private fun publishMediaStore(part: File, name: String, mimeType: String): String {
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBFOLDER")
-            put(MediaStore.MediaColumns.IS_PENDING, 1) // hidden from other apps until the copy is complete
-        }
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("Cannot create a file in Downloads")
-        try {
-            val out = resolver.openOutputStream(uri, "w") ?: throw IOException("Cannot open the new file")
-            out.use { target ->
-                FileInputStream(part).use { source -> source.copyTo(target, 1 shl 20) }
-            }
-            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(uri, done, null, null)
-            return uri.toString()
-        } catch (e: Exception) {
-            try {
-                resolver.delete(uri, null, null)
-            } catch (_: Exception) {
-            }
-            throw if (e is IOException) e else IOException(e.message, e)
-        }
-    }
+    private val resolver = context.contentResolver
 
     @Suppress("DEPRECATION")
-    private fun publishLegacy(part: File, name: String): String {
-        val dir = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), DOWNLOAD_SUBFOLDER
-        )
-        if (!dir.isDirectory && !dir.mkdirs()) {
-            throw IOException("Cannot create the Downloads/$DOWNLOAD_SUBFOLDER folder")
-        }
-        val target = File(dir, FileNames.unique(name) { File(dir, it).exists() })
-        part.copyTo(target)
-        MediaScannerConnection.scanFile(context, arrayOf(target.absolutePath), null, null)
-        return Uri.fromFile(target).toString()
+    override fun freeSpace(): Long = try {
+        File(Environment.getExternalStorageDirectory().path).usableSpace
+    } catch (_: Exception) {
+        context.filesDir.usableSpace
     }
+
+    override fun createPartial(name: String, mimeType: String): String {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "${UUID.randomUUID()}.part")
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBFOLDER")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("Cannot create the file in Downloads")
+        return uri.toString()
+    }
+
+    override fun storedSize(ref: String): Long = try {
+        resolver.openFileDescriptor(Uri.parse(ref), "r")?.use { it.statSize } ?: -1L
+    } catch (_: Exception) {
+        -1L
+    }
+
+    override fun readPrefix(ref: String, length: Long, sink: (ByteArray, Int, Int) -> Unit) {
+        val pfd = resolver.openFileDescriptor(Uri.parse(ref), "r") ?: throw IOException("The partial file is gone")
+        ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+            val buffer = ByteArray(1 shl 20)
+            var left = length
+            while (left > 0) {
+                val n = input.read(buffer, 0, minOf(buffer.size.toLong(), left).toInt())
+                if (n < 0) {
+                    throw IOException("Stored data is damaged")
+                }
+                sink(buffer, 0, n)
+                left -= n
+            }
+        }
+    }
+
+    override fun openAt(ref: String, offset: Long): OutputStream {
+        val pfd = resolver.openFileDescriptor(Uri.parse(ref), "rw") ?: throw IOException("The partial file is gone")
+        val fos = FileOutputStream(pfd.fileDescriptor)
+        try {
+            if (fos.channel.size() > offset) {
+                fos.channel.truncate(offset)
+            }
+            fos.channel.position(offset)
+        } catch (e: IOException) {
+            pfd.close()
+            throw e
+        }
+        return object : FilterOutputStream(fos) {
+            override fun close() {
+                try {
+                    super.close()
+                } finally {
+                    pfd.close()
+                }
+            }
+        }
+    }
+
+    override fun complete(ref: String, name: String): String {
+        val uri = Uri.parse(ref)
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        for (attempt in 0..MAX_NAME_TRIES) {
+            val candidate = if (attempt == 0) name else "$base ($attempt)$ext"
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, candidate)
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            val changed = try {
+                resolver.update(uri, values, null, null)
+            } catch (_: Exception) {
+                0
+            }
+            if (changed > 0) {
+                return uri.toString()
+            }
+        }
+        throw IOException("Cannot finish $name")
+    }
+
+    override fun exists(location: String): Boolean = try {
+        resolver.openFileDescriptor(Uri.parse(location), "r")?.use { true } ?: false
+    } catch (_: Exception) {
+        false
+    }
+
+    override fun delete(ref: String) {
+        try {
+            resolver.delete(Uri.parse(ref), null, null)
+        } catch (_: Exception) {
+        }
+    }
+}
+
+/** The receiving medium for this Android version: MediaStore on 10+, the Downloads folder on 9 and older. */
+object DownloadsMedium {
+    fun create(context: Context): Medium =
+        if (Build.VERSION.SDK_INT >= 29) MediaStoreMedium(context) else FileMedium(legacyFolder())
+
+    @Suppress("DEPRECATION")
+    private fun legacyFolder(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), DOWNLOAD_SUBFOLDER)
 }
 
 object FileOpener {

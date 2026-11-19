@@ -71,7 +71,6 @@
     <string name="msg_search_failed">Search failed: %1$s</string>
     <string name="msg_connect_failed">Could not connect: %1$s</string>
     <string name="msg_connect_timeout">The other phone did not accept in time. If this keeps failing, switch the receiving phone to compatibility mode.</string>
-    <string name="msg_not_connected">Not connected to a receiver.</string>
     <string name="msg_cancelled">Cancelled</string>
     <string name="msg_sent_summary">Sent %1$d of %2$d files</string>
     <string name="msg_received_summary">Received %1$d of %2$d files</string>
@@ -171,11 +170,6 @@ Received files are kept in the app: open or export them from History.</string>
     <string name="msg_resume_queued">Resume queued - it starts when the phones are connected.</string>
     <string name="app_version">Version %1$s - both phones must show the same version</string>
     <string name="error_version_mismatch">The other phone runs a different build of WifiP2P. Install the same (newest) version on both phones.</string>
-    <string name="action_export">Export to Downloads</string>
-    <string name="msg_exported">Copied to Downloads/WifiP2P. The original stays in the app.</string>
-    <string name="msg_export_no_space">Not enough free space to copy it to Downloads. The file stays in the app and can be opened here.</string>
-    <string name="msg_export_missing">This file is no longer on the phone.</string>
-    <string name="msg_export_failed">Could not copy the file: %1$s</string>
     <string name="msg_unreachable">Still trying to reach the other phone. Keep both screens open. If it keeps failing, scan the QR code again.</string>
     <string name="msg_qr_search_instead">Android 9 or older cannot join from a QR code. Looking for the phone named in the code instead.</string>
     <string name="connection_log">Connection log</string>
@@ -183,4 +177,5 @@ Received files are kept in the app: open or export them from History.</string>
     <string name="copy">Copy</string>
     <string name="close">Close</string>
     <string name="log_copied">Log copied.</string>
+    <string name="msg_waiting_connection">Waiting for the other phone. It is sent as soon as the phones are connected.</string>
 </resources>

@@ -367,6 +367,12 @@ class SenderSession(
             if (start.index != index) {
                 throw ProtocolException("Out-of-order file start")
             }
+            if (start.alreadyStored) {
+                // the receiver has this file already: nothing is sent, and no FILE_END or ACK follows
+                tracker.batchBytes += source.size
+                events.onFileFinished(index, source.name, FileState.DONE, "Already saved on the other phone", null)
+                return FileState.DONE
+            }
             if (!start.accepted) {
                 events.onFileFinished(index, source.name, FileState.FAILED, start.refusal, null)
                 return FileState.FAILED

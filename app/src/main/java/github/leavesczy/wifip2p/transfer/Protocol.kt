@@ -245,7 +245,14 @@ data class FileHeader(
  * The receiver's answer to a FILE header: either "send from [offset]" (0 for a new file, more for a
  * resumed one), or a refusal with a [refusal] reason, in which case no bytes are sent at all.
  */
-data class FileStart(val index: Int, val offset: Long, val prefixCrc: Long = 0L, val refusal: String = "") {
+data class FileStart(
+    val index: Int,
+    val offset: Long,
+    val prefixCrc: Long = 0L,
+    val refusal: String = "",
+    /** The file is already complete on the receiving phone: no bytes are sent for it. */
+    val alreadyStored: Boolean = false
+) {
 
     val accepted: Boolean
         get() = refusal.isEmpty()
@@ -255,6 +262,7 @@ data class FileStart(val index: Int, val offset: Long, val prefixCrc: Long = 0L,
         it.writeLong(offset)
         it.writeInt(prefixCrc.toInt())
         it.writeUTF(refusal.take(300))
+        it.writeBoolean(alreadyStored)
     })
 
     companion object {
@@ -263,10 +271,11 @@ data class FileStart(val index: Int, val offset: Long, val prefixCrc: Long = 0L,
             val offset = it.readLong()
             val prefixCrc = it.readInt().toLong() and 0xFFFFFFFFL
             val refusal = it.readUTF()
+            val alreadyStored = it.readBoolean()
             if (index < 0 || offset < 0) {
                 throw ProtocolException("Invalid file start")
             }
-            FileStart(index, offset, prefixCrc, refusal)
+            FileStart(index, offset, prefixCrc, refusal, alreadyStored)
         }
     }
 }

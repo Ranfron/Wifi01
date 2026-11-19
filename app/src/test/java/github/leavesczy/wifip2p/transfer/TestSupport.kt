@@ -92,26 +92,13 @@ fun sha256(input: InputStream): String {
 
 fun sha256(file: File): String = sha256(file.inputStream())
 
-/** Copies a complete part file into the "Downloads" folder of a test phone. */
-class TestPublisher(private val dir: File) : Publisher {
-    val committed = CopyOnWriteArrayList<File>()
-
-    override fun publish(part: File, name: String, mimeType: String): String? {
-        dir.mkdirs()
-        val target = File(dir, FileNames.unique(name) { File(dir, it).exists() })
-        part.copyTo(target)
-        committed.add(target)
-        return target.absolutePath
-    }
-}
-
 /**
- * Real resumable storage, plus knobs to simulate the phone's problems: a full disk, a storage that
+ * Real resumable storage (a folder medium), plus knobs to simulate the phone's problems: a full disk, a storage that
  * refuses the file, or only a limited amount of free space.
  */
-class ControlledStore(staging: File, publishDir: File) : IncomingStore {
-    val publisher = TestPublisher(publishDir)
-    val inner = FileIncomingStore(staging, publisher)
+class ControlledStore(metaDir: File, publishDir: File) : IncomingStore {
+    val medium = FileMedium(publishDir)
+    val inner = FileIncomingStore(metaDir, medium)
 
     @Volatile
     var available: Long = Long.MAX_VALUE
@@ -128,14 +115,17 @@ class ControlledStore(staging: File, publishDir: File) : IncomingStore {
 
     override fun availableBytes(): Long = available
 
-    override fun open(key: String, name: String, size: Long, mimeType: String, lastModified: Long): IncomingFile {
+    override fun open(key: String, name: String, size: Long, mimeType: String, lastModified: Long): Opened {
         failOpen?.let { throw IOException(it) }
-        val real = inner.open(key, name, size, mimeType, lastModified)
+        val opened = inner.open(key, name, size, mimeType, lastModified)
+        if (opened !is Opened.Receiving) {
+            return opened
+        }
         val failing = writeFailuresLeft > 0
         if (failing) {
             writeFailuresLeft--
         }
-        return ControlledFile(real, if (failing) writeFailAfter else -1L)
+        return Opened.Receiving(ControlledFile(opened.file, if (failing) writeFailAfter else -1L))
     }
 
     fun partials(): List<PartialFile> = inner.partials()
@@ -295,7 +285,7 @@ class Phone(val name: String, val dir: File, tuning: Tuning) {
     /** Files this phone receives. */
     val received = RecordingEvents()
     val link = RecordingLink()
-    val store = ControlledStore(File(dir.parentFile, dir.name + "-staging"), dir)
+    val store = ControlledStore(File(dir.parentFile, dir.name + "-meta"), dir)
     val duplex = DuplexLink(name, tuning, store, sent, received, link)
 }
 

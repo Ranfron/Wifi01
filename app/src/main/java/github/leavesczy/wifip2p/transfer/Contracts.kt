@@ -55,13 +55,22 @@ interface IncomingStore {
 
     /** Starts a new file, or continues the partial file with the same [key] and fingerprint. */
     @Throws(IOException::class)
-    fun open(key: String, name: String, size: Long, mimeType: String, lastModified: Long): IncomingFile
+    fun open(key: String, name: String, size: Long, mimeType: String, lastModified: Long): Opened
 }
 
 /**
  * DONE - arrived and stored. FAILED - refused or damaged, the user decides. CANCELLED - stopped by the
  * user. INTERRUPTED - the connection broke; the file can continue by itself when the phones meet again.
  */
+/** What the store decided for an incoming file. */
+sealed class Opened {
+    /** Receive into [file]: the sender continues from [file].offset. */
+    class Receiving(val file: IncomingFile) : Opened()
+
+    /** The file is already complete here (its acknowledgement was lost earlier): nothing is sent or stored again. */
+    class AlreadyStored(val location: String) : Opened()
+}
+
 enum class FileState { QUEUED, ACTIVE, DONE, FAILED, CANCELLED, INTERRUPTED }
 
 data class FileProgress(

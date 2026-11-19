@@ -71,7 +71,6 @@
     <string name="msg_search_failed">खोज विफल: %1$s</string>
     <string name="msg_connect_failed">जुड़ नहीं सका: %1$s</string>
     <string name="msg_connect_timeout">दूसरे फ़ोन ने समय पर स्वीकार नहीं किया। बार-बार ऐसा हो तो पाने वाले फ़ोन को कम्पैटिबिलिटी मोड पर करें।</string>
-    <string name="msg_not_connected">किसी रिसीवर से जुड़ा नहीं है।</string>
     <string name="msg_cancelled">रद्द की गई</string>
     <string name="msg_sent_summary">%2$d में से %1$d फ़ाइलें भेजी गईं</string>
     <string name="msg_received_summary">%2$d में से %1$d फ़ाइलें मिलीं</string>
@@ -171,11 +170,6 @@
     <string name="msg_resume_queued">आगे बढ़ाना तय हुआ - फ़ोन जुड़ते ही शुरू होगा।</string>
     <string name="app_version">संस्करण %1$s - दोनों फ़ोन पर एक ही संस्करण होना चाहिए</string>
     <string name="error_version_mismatch">दूसरे फ़ोन पर WifiP2P का अलग संस्करण है। दोनों फ़ोन पर एक ही (नवीनतम) संस्करण इंस्टॉल करें।</string>
-    <string name="action_export">Downloads में कॉपी करें</string>
-    <string name="msg_exported">Downloads/WifiP2P में कॉपी हो गई। मूल फ़ाइल ऐप में ही रहेगी।</string>
-    <string name="msg_export_no_space">Downloads में कॉपी के लिए पर्याप्त जगह नहीं है। फ़ाइल ऐप में रहेगी और यहीं से खुल सकती है।</string>
-    <string name="msg_export_missing">यह फ़ाइल अब फ़ोन पर नहीं है।</string>
-    <string name="msg_export_failed">फ़ाइल कॉपी नहीं हो सकी: %1$s</string>
     <string name="msg_unreachable">दूसरे फ़ोन तक पहुँचने की कोशिश जारी है। दोनों स्क्रीन खुली रखें। बार-बार न हो तो QR कोड दोबारा स्कैन करें।</string>
     <string name="msg_qr_search_instead">Android 9 या पुराने फ़ोन QR कोड से सीधे नहीं जुड़ सकते। कोड वाले फ़ोन को खोजा जा रहा है।</string>
     <string name="connection_log">कनेक्शन लॉग</string>
@@ -183,4 +177,5 @@
     <string name="copy">कॉपी करें</string>
     <string name="close">बंद करें</string>
     <string name="log_copied">लॉग कॉपी हो गया।</string>
+    <string name="msg_waiting_connection">दूसरे फ़ोन का इंतज़ार। फ़ोन जुड़ते ही भेजी जाएगी।</string>
 </resources>

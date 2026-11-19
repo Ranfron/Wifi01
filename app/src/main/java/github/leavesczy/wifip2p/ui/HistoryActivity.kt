@@ -34,7 +34,7 @@ data class RecordRow(
     val location: String?,
     val name: String
 ) {
-    enum class Action { NONE, RESUME, CLEAN_OUTGOING, CLEAN_INCOMING, OPEN, EXPORT }
+    enum class Action { NONE, RESUME, CLEAN_OUTGOING, CLEAN_INCOMING, OPEN }
 }
 
 /**
@@ -147,15 +147,14 @@ class HistoryActivity : AppCompatActivity() {
         val date = android.text.format.DateFormat.format("d MMM HH:mm", entry.time).toString()
         val info = listOf(direction, Formatters.size(entry.size), date, stateLabel(entry.state)).joinToString(" • ")
         val done = !entry.outgoing && entry.state == FileState.DONE && entry.location.isNotEmpty()
-        val isFile = entry.location.startsWith("/")
         return RecordRow(
             key = entry.time.toString() + entry.name,
             title = entry.name,
             info = if (entry.reason.isNotEmpty() && entry.state != FileState.DONE) info + "\n" + entry.reason else info,
             primaryText = if (done) R.string.action_open else 0,
             primaryAction = if (done) RecordRow.Action.OPEN else RecordRow.Action.NONE,
-            secondaryText = if (done && isFile) R.string.action_export else 0,
-            secondaryAction = if (done && isFile) RecordRow.Action.EXPORT else RecordRow.Action.NONE,
+            secondaryText = 0,
+            secondaryAction = RecordRow.Action.NONE,
             location = entry.location.takeIf { done },
             name = entry.name
         )
@@ -191,11 +190,6 @@ class HistoryActivity : AppCompatActivity() {
 
             RecordRow.Action.OPEN -> row.location?.let { location -> openFile(location, row.name) }
 
-            RecordRow.Action.EXPORT -> row.location?.let { location ->
-                hub.exportToDownloads(location, row.name) { message ->
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                }
-            }
 
             RecordRow.Action.NONE -> Unit
         }

@@ -16,10 +16,7 @@ import github.leavesczy.wifip2p.p2p.P2pController
 import github.leavesczy.wifip2p.p2p.P2pPeer
 import github.leavesczy.wifip2p.p2p.WifiJoiner
 import github.leavesczy.wifip2p.service.TransferService
-import github.leavesczy.wifip2p.storage.DownloadsPublisher
 import github.leavesczy.wifip2p.storage.UriSendSource
-import github.leavesczy.wifip2p.storage.guessMimeType
-import java.io.File
 import github.leavesczy.wifip2p.transfer.ChannelDirection
 import github.leavesczy.wifip2p.transfer.ConnectCode
 import github.leavesczy.wifip2p.transfer.DuplexLink
@@ -98,7 +95,6 @@ class TransferHub(
     private val lock = Any()
 
     private val tuning = Tuning()
-    private val exporter = DownloadsPublisher(app)
 
     // ---- session facts. Derived into the UI state by publish() -----------------------------------
     private var p2p: P2pController? = null
@@ -469,6 +465,10 @@ class TransferHub(
                     sources.add(source)
                     ids.add(id)
                     items.add(TransferItem(id, source.name, source.size, Direction.OUT, FileState.QUEUED))
+                    // recorded before anything is sent: a file that is not finished survives an app restart
+                    ledger.put(
+                        OutgoingEntry(source.key, uri.toString(), source.name, source.size, source.lastModified, FileState.QUEUED, "", 0)
+                    )
                 } catch (e: Exception) {
                     items.add(
                         TransferItem(
@@ -492,7 +492,9 @@ class TransferHub(
                     pendingBatches.remove(ids)
                     sources.forEach { inFlightKeys.remove(it.key) }
                 }
-                markFailed(ids.toSet(), app.getString(R.string.msg_not_connected))
+                ids.forEach { id ->
+                    updateItem(id) { it.copy(state = FileState.INTERRUPTED, message = app.getString(R.string.msg_waiting_connection)) }
+                }
             }
         }
     }
@@ -536,28 +538,6 @@ class TransferHub(
     fun cleanIncoming(key: String) {
         worker.execute {
             incoming.discard(key)
-        }
-    }
-
-    /**
-     * Copies a received file into Downloads/WifiP2P. This is an explicit choice: the copy needs room for the
-     * whole file again, so the free space is checked first and the original is always kept.
-     */
-    fun exportToDownloads(location: String, name: String, onResult: (String) -> Unit) {
-        worker.execute {
-            val file = File(location)
-            val text = when {
-                !file.isFile -> app.getString(R.string.msg_export_missing)
-                (file.parentFile?.usableSpace ?: 0L) < file.length() + EXPORT_RESERVE_BYTES ->
-                    app.getString(R.string.msg_export_no_space)
-                else -> try {
-                    exporter.publish(file, name, guessMimeType(name))
-                    app.getString(R.string.msg_exported)
-                } catch (e: Exception) {
-                    app.getString(R.string.msg_export_failed, describeError(e))
-                }
-            }
-            main.post { onResult(text) }
         }
     }
 
@@ -677,7 +657,9 @@ class TransferHub(
     private fun resumeAfterReconnect() {
         worker.execute {
             val wanted = synchronized(lock) { waitingResume.toSet() }
-            val entries = ledger.all().filter { it.state == FileState.INTERRUPTED || it.key in wanted }
+            val entries = ledger.all().filter {
+                it.state == FileState.INTERRUPTED || it.state == FileState.QUEUED || it.key in wanted
+            }
             startResume(entries)
         }
     }
@@ -1240,6 +1222,8 @@ class TransferHub(
                     )
                 )
             }
+            // the channel is down: nothing is in flight any more, so every unfinished file can be sent again
+            synchronized(lock) { inFlightKeys.clear() }
         }
     }
 
@@ -1369,7 +1353,6 @@ class TransferHub(
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val GROUP_TIMEOUT_MS = 25_000L
         const val EXPIRY_MS = 5L * 24 * 60 * 60 * 1000
-        const val EXPORT_RESERVE_BYTES = 256L * 1024 * 1024
         const val LOG_CAPACITY = 300
         const val GROUP_GONE_DELAY_MS = 8_000L
     }

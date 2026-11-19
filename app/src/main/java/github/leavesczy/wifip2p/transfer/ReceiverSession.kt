@@ -151,11 +151,23 @@ class ReceiverSession(
         val key = header.key.ifEmpty { "$name|${header.size}|${header.lastModified}" }
         val prefix = CRC32()
 
-        val incoming: IncomingFile = try {
+        val opened: Opened = try {
             store.open(key, name, header.size, header.mimeType, header.lastModified)
         } catch (e: Exception) {
             refuse(header, name, "Cannot create file: ${describeError(e)}")
             return
+        }
+        val incoming: IncomingFile = when (opened) {
+            is Opened.AlreadyStored -> {
+                // Already complete here (the sender's acknowledgement was lost): it is not stored a second time.
+                batchBytes += header.size
+                events.onFileStarted(header.index, name, header.size)
+                events.onFileFinished(header.index, name, FileState.DONE, "Already saved on this phone", opened.location)
+                write(FileStart(header.index, header.size, 0L, "", alreadyStored = true).toFrame())
+                return
+            }
+
+            is Opened.Receiving -> opened.file
         }
         try {
             // The checksum must cover what is already stored; read it before accepting the resume.
