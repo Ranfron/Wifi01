@@ -30,7 +30,7 @@ object Permissions {
                 list.add(Manifest.permission.ACCESS_COARSE_LOCATION)
             }
         }
-        if (Build.VERSION.SDK_INT <= 28) {
+        if (Build.VERSION.SDK_INT <= 29) {
             list.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         return list

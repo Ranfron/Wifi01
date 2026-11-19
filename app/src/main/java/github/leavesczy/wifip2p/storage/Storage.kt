@@ -13,7 +13,10 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import android.media.MediaScannerConnection
+import github.leavesczy.wifip2p.transfer.FileFingerprint
 import github.leavesczy.wifip2p.transfer.FileNames
+import github.leavesczy.wifip2p.transfer.FrameIO
 import github.leavesczy.wifip2p.transfer.FileMedium
 import github.leavesczy.wifip2p.transfer.Medium
 import github.leavesczy.wifip2p.transfer.SendSource
@@ -64,6 +67,30 @@ class UriSendSource private constructor(
         /** Removes leftovers of files that had to be staged (see [create]); called at app start. */
         fun clearStaging(context: Context) {
             File(context.cacheDir, STAGING_DIR).deleteRecursively()
+        }
+
+        /**
+         * The file's identity for the duplicate check. It is read from both ends of the file, so the same file gets the
+         * same key every time it is picked. Null when the file cannot be read this way (the key is then random).
+         */
+        private fun fingerprint(resolver: ContentResolver, uri: Uri, name: String, size: Long): String? {
+            if (size <= 0) {
+                return null
+            }
+            return try {
+                val pfd = resolver.openFileDescriptor(uri, "r") ?: return null
+                ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                    val sample = minOf(FileFingerprint.SAMPLE_BYTES.toLong(), size).toInt()
+                    val head = ByteArray(sample)
+                    val headRead = FrameIO.readUpTo(input, head, sample)
+                    input.channel.position(size - sample)
+                    val tail = ByteArray(sample)
+                    val tailRead = FrameIO.readUpTo(input, tail, sample)
+                    FileFingerprint.key(name, size, head.copyOf(headRead), tail.copyOf(tailRead))
+                }
+            } catch (_: Exception) {
+                null
+            }
         }
 
         /** Keeps read access to [uri] across app restarts, so an interrupted file can be resumed later. */
@@ -122,7 +149,7 @@ class UriSendSource private constructor(
                     throw IOException("Cannot open file", e)
                 }
             }
-            val fileKey = key ?: UUID.randomUUID().toString()
+            val fileKey = key ?: fingerprint(resolver, uri, name, size) ?: UUID.randomUUID().toString()
             if (size < 0) {
                 return stage(context, uri, name, mime, fileKey)
             }
@@ -288,10 +315,53 @@ class MediaStoreMedium(private val context: Context) : Medium {
     }
 }
 
-/** The receiving medium for this Android version: MediaStore on 10+, the Downloads folder on 9 and older. */
-object DownloadsMedium {
-    fun create(context: Context): Medium =
-        if (Build.VERSION.SDK_INT >= 29) MediaStoreMedium(context) else FileMedium(legacyFolder())
+/**
+ * The receiving medium: Downloads/WifiP2P. A file is written straight into that folder (the fast path) whenever the app
+ * may do so: Android 10 and older with the legacy storage rights, Android 11 and newer with "All files access". Without
+ * it the MediaStore path is used, which is much slower on many phones. Every partial file keeps the medium it was started
+ * in, so switching the permission does not lose a file.
+ */
+class DownloadsMedium(private val context: Context) : Medium {
+
+    companion object {
+        /** Whether files can be written straight into Downloads (the fast path). */
+        fun fastAccess(): Boolean = Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager()
+    }
+
+    private val mediaStore by lazy { MediaStoreMedium(context) }
+    private val folder by lazy { FileMedium(legacyFolder()) }
+
+    private fun preferred(): Medium = if (fastAccess()) folder else mediaStore
+
+    private fun forRef(ref: String): Medium = if (ref.startsWith("content:")) mediaStore else folder
+
+    override fun freeSpace(): Long = preferred().freeSpace()
+
+    @Throws(IOException::class)
+    override fun createPartial(name: String, mimeType: String): String = preferred().createPartial(name, mimeType)
+
+    override fun storedSize(ref: String): Long = forRef(ref).storedSize(ref)
+
+    @Throws(IOException::class)
+    override fun readPrefix(ref: String, length: Long, sink: (ByteArray, Int, Int) -> Unit) =
+        forRef(ref).readPrefix(ref, length, sink)
+
+    @Throws(IOException::class)
+    override fun openAt(ref: String, offset: Long): OutputStream = forRef(ref).openAt(ref, offset)
+
+    @Throws(IOException::class)
+    override fun complete(ref: String, name: String): String {
+        val location = forRef(ref).complete(ref, name)
+        if (!location.startsWith("content:")) {
+            // a file written directly is not known to MediaStore yet: let the media apps see it too
+            MediaScannerConnection.scanFile(context, arrayOf(location), null, null)
+        }
+        return location
+    }
+
+    override fun exists(location: String): Boolean = forRef(location).exists(location)
+
+    override fun delete(ref: String) = forRef(ref).delete(ref)
 
     @Suppress("DEPRECATION")
     private fun legacyFolder(): File =

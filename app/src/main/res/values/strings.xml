@@ -178,4 +178,8 @@ Received files are kept in the app: open or export them from History.</string>
     <string name="close">Close</string>
     <string name="log_copied">Log copied.</string>
     <string name="msg_waiting_connection">Waiting for the other phone. It is sent as soon as the phones are connected.</string>
+    <string name="fast_access_on">Fast file access: on. Files are written straight into Downloads/WifiP2P.</string>
+    <string name="fast_access_off">Fast file access: off. Without it many phones transfer much slower. Allow "All files access" for full speed.</string>
+    <string name="fast_access_button">Allow fast file access</string>
+    <string name="unfinished_more">%1$d more in History</string>
 </resources>

@@ -65,6 +65,13 @@ class SessionActivity : AppCompatActivity() {
 
     private val peerAdapter = PeerAdapter { peer -> hub.connectTo(peer) }
     private val transferAdapter = TransferAdapter { item -> open(item) }
+    private val unfinishedAdapter = RecordAdapter(
+        onPrimary = { row -> onUnfinishedAction(row, primary = true) },
+        onSecondary = { row -> onUnfinishedAction(row, primary = false) }
+    )
+    private var lastSendReady = false
+    private var lastReceiveReady = false
+    private var lastActive = false
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -112,6 +119,8 @@ class SessionActivity : AppCompatActivity() {
         binding.rvPeers.adapter = peerAdapter
         binding.rvTransfers.layoutManager = LinearLayoutManager(this)
         binding.rvTransfers.adapter = transferAdapter
+        binding.rvUnfinished.layoutManager = LinearLayoutManager(this)
+        binding.rvUnfinished.adapter = unfinishedAdapter
 
         binding.btnScan.setOnClickListener { scanner.launch(Intent(this, ScanActivity::class.java)) }
         binding.btnSearch.setOnClickListener { hub.discoverPeers() }
@@ -162,6 +171,7 @@ class SessionActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshUnfinished()
         if (sessionStarted) {
             lastBannerKey = null
             renderBanner(hub.state.value)
@@ -213,6 +223,7 @@ class SessionActivity : AppCompatActivity() {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
 
+        maybeRefreshUnfinished(state)
         renderStatus(state)
         renderBanner(state)
         renderConnectArea(state, connected)
@@ -449,6 +460,37 @@ class SessionActivity : AppCompatActivity() {
     // Actions
     // =============================================================================================
 
+    /** The unfinished files are listed here too, so a resume is one tap away while connected. */
+    private fun refreshUnfinished() {
+        hub.loadRecords { records ->
+            val now = System.currentTimeMillis()
+            val shown = records.unfinished.take(UNFINISHED_ON_SCREEN)
+            unfinishedAdapter.submitList(shown.map { RecordRows.unfinished(this, it, now) })
+            binding.cardUnfinished.show(records.unfinished.isNotEmpty())
+            binding.tvUnfinishedTitle.text = getString(R.string.tab_unfinished_count, records.unfinished.size)
+            val more = records.unfinished.size - shown.size
+            binding.tvUnfinishedMore.show(more > 0)
+            binding.tvUnfinishedMore.text = getString(R.string.unfinished_more, more)
+        }
+    }
+
+    /** Read again whenever a channel or a transfer changes, so the list follows the connection. */
+    private fun maybeRefreshUnfinished(state: HubState) {
+        val active = state.transferring
+        if (state.sendReady != lastSendReady || state.receiveReady != lastReceiveReady || (lastActive && !active)) {
+            lastSendReady = state.sendReady
+            lastReceiveReady = state.receiveReady
+            refreshUnfinished()
+        }
+        lastActive = active
+    }
+
+    private fun onUnfinishedAction(row: RecordRow, primary: Boolean) {
+        RecordRows.perform(this, hub, row, primary) {
+            binding.root.postDelayed({ refreshUnfinished() }, 300)
+        }
+    }
+
     /** The recent connection events, so a failure on this phone can be explained (and copied). */
     private fun showLog() {
         val lines = hub.connectionLog()
@@ -492,6 +534,7 @@ class SessionActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_ROLE = "role"
+        private const val UNFINISHED_ON_SCREEN = 3
         const val EXTRA_SEARCH = "search"
         private const val QR_SIZE_PX = 800
 

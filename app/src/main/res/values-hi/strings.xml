@@ -178,4 +178,8 @@
     <string name="close">बंद करें</string>
     <string name="log_copied">लॉग कॉपी हो गया।</string>
     <string name="msg_waiting_connection">दूसरे फ़ोन का इंतज़ार। फ़ोन जुड़ते ही भेजी जाएगी।</string>
+    <string name="fast_access_on">तेज़ फ़ाइल एक्सेस: चालू। फ़ाइलें सीधे Downloads/WifiP2P में लिखी जाती हैं।</string>
+    <string name="fast_access_off">तेज़ फ़ाइल एक्सेस: बंद। इसके बिना कई फ़ोन पर ट्रांसफ़र बहुत धीमा होता है। पूरी स्पीड के लिए "All files access" दें।</string>
+    <string name="fast_access_button">तेज़ फ़ाइल एक्सेस दें</string>
+    <string name="unfinished_more">इतिहास में %1$d और</string>
 </resources>

@@ -48,6 +48,14 @@ Storage: every received file is written once, straight into **Downloads/WifiP2P*
 Both phones must run the same build (the version is shown on the home screen). Protocol v2 (`FILE_START` carries the resume offset and the stored part's CRC, `HEARTBEAT` frames) is not compatible with
 v1: both phones must run the same version of the app.
 
+## Speed and duplicates
+
+* **Fast file access**: received files are written straight into `Downloads/WifiP2P`. On Android 11 and newer this
+  needs *All files access* (the home screen has a button for it). Without it the app uses MediaStore, which is much
+  slower on many phones.
+* **Duplicates**: a picked file gets an identity from its name, size and the bytes at both ends. The same file is
+  recognised when it is sent again, and it is not sent or saved twice. Delete the file from Downloads to send it again.
+
 ## Build
 
 * **Android Studio**: open this folder, *Build > Build Bundle(s) / APK(s) > Build APK(s)*.

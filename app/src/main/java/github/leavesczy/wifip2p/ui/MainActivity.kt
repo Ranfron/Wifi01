@@ -1,8 +1,9 @@
 package github.leavesczy.wifip2p.ui
 
-import github.leavesczy.wifip2p.transferHub
 
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.widget.ImageView
@@ -12,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.databinding.ActivityMainBinding
+import github.leavesczy.wifip2p.storage.DownloadsMedium
 import github.leavesczy.wifip2p.transferHub
 import github.leavesczy.wifip2p.hub.Role
 import github.leavesczy.wifip2p.util.PermissionFlow
@@ -59,6 +61,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnScanQr.setOnClickListener { open(Role.JOIN) }
         binding.btnSearchPhones.setOnClickListener { open(Role.JOIN, search = true) }
         binding.btnHistory.setOnClickListener { startActivity(Intent(this, HistoryActivity::class.java)) }
+        binding.btnFastAccess.setOnClickListener { openAllFilesAccess() }
 
         if (savedInstanceState == null) {
             // Unfinished transfers older than five days are removed when the app is opened, not in the background.
@@ -87,6 +90,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshChecks() {
+        refreshFastAccess()
         val pending = transferHub().state.value.pendingShare
         binding.cardShare.show(pending > 0)
         binding.tvShareInfo.text = resources.getQuantityString(R.plurals.share_waiting, pending, pending)
@@ -112,6 +116,22 @@ class MainActivity : AppCompatActivity() {
                 R.string.check_location_ok, R.string.check_location_off
             )
             binding.btnLocationSettings.show(locationOff)
+        }
+    }
+
+    /** Fast file access: writing straight into Downloads (Android 11 and newer needs "All files access"). */
+    private fun refreshFastAccess() {
+        val fast = DownloadsMedium.fastAccess()
+        binding.tvFastAccess.text = getString(if (fast) R.string.fast_access_on else R.string.fast_access_off)
+        binding.btnFastAccess.show(!fast)
+    }
+
+    private fun openAllFilesAccess() {
+        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
     }
 

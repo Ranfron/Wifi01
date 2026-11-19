@@ -26,7 +26,7 @@ class App : Application() {
             ledger = OutgoingLedger(File(filesDir, "outgoing.log")),
             history = HistoryLog(File(filesDir, "history.log")),
             // received files are written once, straight into Downloads/WifiP2P
-            incoming = FileIncomingStore(File(filesDir, "incoming-meta"), DownloadsMedium.create(this))
+            incoming = FileIncomingStore(File(filesDir, "incoming-meta"), DownloadsMedium(this))
         )
     }
 }

@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.DiffUtil
@@ -16,13 +15,9 @@ import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.databinding.ActivityHistoryBinding
 import github.leavesczy.wifip2p.databinding.ItemRecordBinding
 import github.leavesczy.wifip2p.hub.TransferHub
-import github.leavesczy.wifip2p.storage.FileOpener
-import github.leavesczy.wifip2p.transfer.FileState
-import github.leavesczy.wifip2p.transfer.Formatters
-import github.leavesczy.wifip2p.transfer.HistoryEntry
 import github.leavesczy.wifip2p.transferHub
 
-/** One line of the history screen, already worded. */
+/** One line of a records list, already worded. */
 data class RecordRow(
     val key: String,
     val title: String,
@@ -39,7 +34,7 @@ data class RecordRow(
 
 /**
  * Unfinished transfers and history, read from the app's own records. Nothing runs in the background:
- * the list is read when the screen opens and after every action.
+ * the lists are read when the screen opens and after every action.
  */
 class HistoryActivity : AppCompatActivity() {
 
@@ -97,117 +92,21 @@ class HistoryActivity : AppCompatActivity() {
         binding.btnTabUnfinished.text = getString(R.string.tab_unfinished_count, current.unfinished.size)
         binding.btnClearHistory.show(!showUnfinished)
         val rows = if (showUnfinished) {
-            current.unfinished.map { unfinishedRow(it, now) }
+            current.unfinished.map { RecordRows.unfinished(this, it, now) }
         } else {
-            current.history.map { historyRow(it) }
+            current.history.map { RecordRows.history(this, it) }
         }
         adapter.submitList(rows)
         binding.tvEmpty.show(rows.isEmpty())
         binding.tvEmpty.setText(if (showUnfinished) R.string.unfinished_empty else R.string.history_empty)
     }
 
-    private fun unfinishedRow(row: TransferHub.UnfinishedRow, now: Long): RecordRow {
-        val daysLeft = ((row.updatedAt + EXPIRY_MS) - now) / DAY_MS
-        val expiry = if (daysLeft >= 1) {
-            getString(R.string.row_expires_days, daysLeft.toInt())
-        } else {
-            getString(R.string.row_expires_today)
-        }
-        return if (row.outgoing) {
-            val info = getString(R.string.row_info_outgoing, Formatters.size(row.size), expiry)
-            RecordRow(
-                key = row.key,
-                title = row.name,
-                info = if (row.reason.isNotEmpty()) info + "\n" + row.reason else info,
-                primaryText = R.string.action_resume,
-                primaryAction = RecordRow.Action.RESUME,
-                secondaryText = R.string.action_clean,
-                secondaryAction = RecordRow.Action.CLEAN_OUTGOING,
-                location = null,
-                name = row.name
-            )
-        } else {
-            val info = getString(R.string.row_info_incoming, Formatters.size(row.stored), Formatters.size(row.size), expiry)
-            RecordRow(
-                key = row.key,
-                title = row.name,
-                info = info,
-                primaryText = R.string.action_clean,
-                primaryAction = RecordRow.Action.CLEAN_INCOMING,
-                secondaryText = 0,
-                secondaryAction = RecordRow.Action.NONE,
-                location = null,
-                name = row.name
-            )
-        }
-    }
-
-    private fun historyRow(entry: HistoryEntry): RecordRow {
-        val direction = getString(if (entry.outgoing) R.string.history_sent else R.string.history_received)
-        val date = android.text.format.DateFormat.format("d MMM HH:mm", entry.time).toString()
-        val info = listOf(direction, Formatters.size(entry.size), date, stateLabel(entry.state)).joinToString(" • ")
-        val done = !entry.outgoing && entry.state == FileState.DONE && entry.location.isNotEmpty()
-        return RecordRow(
-            key = entry.time.toString() + entry.name,
-            title = entry.name,
-            info = if (entry.reason.isNotEmpty() && entry.state != FileState.DONE) info + "\n" + entry.reason else info,
-            primaryText = if (done) R.string.action_open else 0,
-            primaryAction = if (done) RecordRow.Action.OPEN else RecordRow.Action.NONE,
-            secondaryText = 0,
-            secondaryAction = RecordRow.Action.NONE,
-            location = entry.location.takeIf { done },
-            name = entry.name
-        )
-    }
-
-    private fun stateLabel(state: FileState): String = getString(
-        when (state) {
-            FileState.DONE -> R.string.state_done_short
-            FileState.CANCELLED -> R.string.state_cancelled
-            FileState.INTERRUPTED -> R.string.state_interrupted
-            else -> R.string.state_failed
-        }
-    )
-
     private fun onAction(row: RecordRow, primary: Boolean) {
-        val hub = transferHub()
-        when (if (primary) row.primaryAction else row.secondaryAction) {
-            RecordRow.Action.RESUME -> {
-                hub.resume(row.key)
-                Toast.makeText(this, R.string.msg_resume_queued, Toast.LENGTH_SHORT).show()
-                refreshSoon()
-            }
-
-            RecordRow.Action.CLEAN_OUTGOING -> {
-                hub.clean(row.key)
-                refreshSoon()
-            }
-
-            RecordRow.Action.CLEAN_INCOMING -> {
-                hub.cleanIncoming(row.key)
-                refreshSoon()
-            }
-
-            RecordRow.Action.OPEN -> row.location?.let { location -> openFile(location, row.name) }
-
-
-            RecordRow.Action.NONE -> Unit
-        }
-    }
-
-    private fun openFile(location: String, name: String) {
-        if (!FileOpener.open(this, location, name)) {
-            Toast.makeText(this, R.string.no_app_to_open, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    companion object {
-        private const val DAY_MS = 24L * 60 * 60 * 1000
-        private const val EXPIRY_MS = 5L * DAY_MS
+        RecordRows.perform(this, transferHub(), row, primary) { refreshSoon() }
     }
 }
 
-/** Shows the rows of the history screen. Each row has an optional primary and secondary action. */
+/** Shows the rows of a records list. Each row has an optional primary and secondary button. */
 class RecordAdapter(
     private val onPrimary: (RecordRow) -> Unit,
     private val onSecondary: (RecordRow) -> Unit
