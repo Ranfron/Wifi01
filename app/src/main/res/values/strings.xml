@@ -232,4 +232,5 @@
     <string name="wifi_signal_good">good</string>
     <string name="wifi_signal_fair">fair</string>
     <string name="wifi_signal_weak">weak</string>
+    <string name="home_section_connect">Connect two phones</string>
 </resources>

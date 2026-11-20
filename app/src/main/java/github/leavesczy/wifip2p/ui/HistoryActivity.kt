@@ -90,6 +90,8 @@ class HistoryActivity : AppCompatActivity() {
         val current = records ?: return
         val now = System.currentTimeMillis()
         binding.btnTabUnfinished.text = getString(R.string.tab_unfinished_count, current.unfinished.size)
+        // the highlighted segment always follows what the list shows (also after a screen rotation)
+        binding.toggleTabs.check(if (showUnfinished) R.id.btnTabUnfinished else R.id.btnTabHistory)
         binding.btnClearHistory.show(!showUnfinished)
         val rows = if (showUnfinished) {
             current.unfinished.map { RecordRows.unfinished(this, it, now) }

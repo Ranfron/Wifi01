@@ -10,60 +10,89 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- aiming frame -->
-    <View
-        android:layout_width="260dp"
-        android:layout_height="260dp"
-        android:layout_gravity="center"
-        android:background="@drawable/scan_frame" />
-
+    <!-- Dark mask with a clear square in the middle: the camera shows only inside the frame -->
     <LinearLayout
-        android:id="@+id/overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#80000000"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="4dp">
-
-            <ImageButton
-                android:id="@+id/btnClose"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/cancel"
-                android:src="@drawable/ic_close"
-                app:tint="@color/white" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="@string/scan_qr"
-                android:textAppearance="?attr/textAppearanceTitleMedium"
-                android:textColor="@color/white" />
-        </LinearLayout>
-
         <View
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1" />
+            android:layout_weight="1"
+            android:background="@color/scan_scrim" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="260dp"
+            android:orientation="horizontal">
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@color/scan_scrim" />
+
+            <!-- aiming frame: four corner brackets -->
+            <View
+                android:layout_width="260dp"
+                android:layout_height="260dp"
+                android:background="@drawable/scan_frame" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@color/scan_scrim" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="@color/scan_scrim">
+
+            <TextView
+                android:id="@+id/tvScanInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:gravity="center"
+                android:paddingStart="32dp"
+                android:paddingTop="24dp"
+                android:paddingEnd="32dp"
+                android:text="@string/scan_instruction"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textColor="@color/white" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Top bar sits above the mask and keeps clear of the status bar -->
+    <LinearLayout
+        android:id="@+id/overlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="4dp">
+
+        <ImageButton
+            android:id="@+id/btnClose"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/cancel"
+            android:src="@drawable/ic_close"
+            app:tint="@color/white" />
 
         <TextView
-            android:id="@+id/tvScanInfo"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:background="#80000000"
-            android:gravity="center"
-            android:padding="16dp"
-            android:text="@string/scan_instruction"
-            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/scan_qr"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
             android:textColor="@color/white" />
     </LinearLayout>
 </FrameLayout>

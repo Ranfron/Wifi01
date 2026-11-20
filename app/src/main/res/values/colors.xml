@@ -3,18 +3,79 @@
     <color name="white">#FFFFFFFF</color>
     <color name="ic_launcher_background">#FF0F9FEF</color>
 
-    <!-- Brand -->
-    <color name="brand_primary">#FF0277BD</color>
+    <!-- Brand (primary = sapphire blue) -->
+    <color name="brand_primary">#FF0B52C9</color>
     <color name="brand_on_primary">#FFFFFFFF</color>
-    <color name="brand_primary_container">#FFCFE5FF</color>
-    <color name="brand_on_primary_container">#FF001D33</color>
+    <color name="brand_primary_container">#FFDDE7FF</color>
+    <color name="brand_on_primary_container">#FF00174A</color>
+
+    <!-- Secondary (calm blue-grey, used by selected segments and tonal buttons) -->
+    <color name="brand_secondary">#FF565F71</color>
+    <color name="brand_on_secondary">#FFFFFFFF</color>
+    <color name="brand_secondary_container">#FFDAE2F9</color>
+    <color name="brand_on_secondary_container">#FF131C2B</color>
+
+    <!-- Tertiary (teal, the "receiving" colour) -->
+    <color name="brand_tertiary">#FF00696A</color>
+    <color name="brand_on_tertiary">#FFFFFFFF</color>
+    <color name="brand_tertiary_container">#FF9CF0F1</color>
+    <color name="brand_on_tertiary_container">#FF002020</color>
+
+    <!-- Error -->
+    <color name="md_error">#FFBA1A1A</color>
+    <color name="md_on_error">#FFFFFFFF</color>
+    <color name="md_error_container">#FFFFDAD6</color>
+    <color name="md_on_error_container">#FF410002</color>
+
+    <!-- Surfaces -->
+    <color name="md_background">#FFF5F7FB</color>
+    <color name="md_on_surface">#FF171C26</color>
+    <color name="md_surface_variant">#FFE1E5F0</color>
+    <color name="md_on_surface_variant">#FF424959</color>
+    <color name="md_outline">#FF727A8C</color>
+    <color name="md_outline_variant">#FFCDD2DF</color>
+    <color name="md_container_lowest">#FFFFFFFF</color>
+    <color name="md_container_low">#FFF0F3F9</color>
+    <color name="md_container">#FFEBEFF7</color>
+    <color name="md_container_high">#FFE5E9F2</color>
+    <color name="md_container_highest">#FFDFE4EE</color>
+    <color name="md_inverse_surface">#FF2D323E</color>
+    <color name="md_inverse_on_surface">#FFEEF0F8</color>
+    <color name="md_inverse_primary">#FFAEC6FF</color>
+
+    <!-- Cards on the page -->
+    <color name="card_bg">#FFFFFFFF</color>
+    <color name="card_stroke">#FFE1E5EE</color>
+
+    <!-- Home hero panel -->
+    <color name="hero_start">#FF0A3A94</color>
+    <color name="hero_end">#FF1B72EE</color>
+    <color name="hero_pill">#29FFFFFF</color>
+    <color name="hero_button">#33FFFFFF</color>
+
+    <!-- Big action tile on the home screen -->
+    <color name="action_bg">#FF0B52C9</color>
+    <color name="action_fg">#FFFFFFFF</color>
+    <color name="action_badge">#2EFFFFFF</color>
+
+    <!-- Direction colours: sending = blue, receiving = teal -->
+    <color name="dir_send">#FF0B52C9</color>
+    <color name="dir_receive">#FF00796B</color>
+    <color name="send_container">#FFDDE7FF</color>
+    <color name="receive_container">#FFD2F3EC</color>
+    <color name="badge_neutral">#FFE9EDF6</color>
 
     <!-- The QR card is white in light and dark mode (scanners need the contrast) -->
     <color name="qr_card_text">#FF202124</color>
+    <color name="qr_card_text_secondary">#FF5F6368</color>
+    <color name="qr_card_accent">#FF0B52C9</color>
+
+    <!-- QR scanner -->
+    <color name="scan_scrim">#B3000000</color>
 
     <!-- Transfer status colours -->
     <color name="status_ok">#FF2E7D32</color>
     <color name="status_error">#FFBA1A1A</color>
-    <color name="status_active">#FF0277BD</color>
-    <color name="status_neutral">#FF5F6368</color>
+    <color name="status_active">#FF0B52C9</color>
+    <color name="status_neutral">#FF6B7385</color>
 </resources>

@@ -154,6 +154,10 @@
     <string name="settings_storage">Storage</string>
     <string name="settings_title">Settings</string>
     <string name="setup_title">Shuru karne se pehle</string>
+    <plurals name="share_waiting">
+        <item quantity="one">%d file bhejne ke liye tayyar</item>
+        <item quantity="other">%d files bhejne ke liye tayyar</item>
+    </plurals>
     <string name="share_label">WifiP2P se bhejein</string>
     <string name="show_qr">QR code dikhayein</string>
     <string name="show_qr_hint">Ye us phone par use karein jo connection receive karega. Doosra phone ye code scan karega.</string>
@@ -213,4 +217,5 @@
     <string name="wifi_signal_good">achha</string>
     <string name="wifi_signal_fair">theek</string>
     <string name="wifi_signal_weak">kamzor</string>
+    <string name="home_section_connect">Do phones jodein</string>
 </resources>

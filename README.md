@@ -23,6 +23,25 @@ Original idea: [Android file transfer without network](https://juejin.cn/post/68
 | Path traversal possible through the received file name | File names are sanitised, duplicates get "(1)", "(2)"... |
 | `serverSocket.reuseAddress` set after `bind()` (no effect) | Set before bind, plus bind retry |
 
+## Look and feel
+
+The whole UI was redesigned without touching the transfer engine, Wi-Fi Direct controller or protocol.
+
+* **One colour system** (`values/colors.xml`, `values-night/colors.xml`): sapphire blue as the brand colour, a calm
+  blue-grey neutral, and a teal accent. Every Material 3 colour role is set, so no default purple tint remains, in
+  light and in dark mode. Blue always means *sending*, teal always means *receiving*.
+* **Typography**: Poppins (Regular / Medium / SemiBold). It has Latin and Devanagari glyphs, so English, Hindi and
+  Hinglish look the same. The font is under the SIL Open Font License (`FONT-LICENSE-Poppins-OFL.txt`).
+* **Home**: a hero panel with a signal-ring motif, two large tappable tiles (*Show QR code* / *Scan QR code*), a
+  checklist card (permissions, Wi-Fi, location, fast file access) that shows what to fix, History, and tips.
+* **Session**: compact status card, one-line *Unfinished* header that opens the list on tap, compact progress cards
+  (blue = sending, teal = receiving), an empty state with an icon, and Disconnect / Send files at the bottom, in
+  thumb reach. The QR card is always white with dark text so every camera can read it, also in dark mode.
+* **History**: a segmented control that always shows the selected tab; every row is a card with Resume / Clean / Open.
+* **Scanner**: dark mask with a clear window and four corner brackets.
+* **Settings**: grouped cards; the 5 GHz option is a switch.
+* **Launcher icon**: new adaptive icon (gradient, signal rings, two-way arrows) with a monochrome layer for themed icons.
+
 ## Connection reliability, resume and history
 
 * **Heartbeats**: an idle or busy phone sends a small heartbeat every 3 s. Silence for 20 s means the other phone is gone,
@@ -111,6 +130,7 @@ hub/        process-wide session state (StateFlow) - survives rotation, owns P2P
 service/    foreground service: notification, wake lock, Wi-Fi lock
 storage/    content-Uri file sources, Downloads sink (MediaStore / legacy), file opener
 ui/         home, one session screen for both roles, QR scanner (CameraX), adapters
+res/        colours (light + dark), Poppins fonts, themes, type scale, widget styles, layouts
 qr/         QR encoder/decoder on top of ZXing (pure JVM, unit-tested)
 util/       permissions, system checks, settings
 ```

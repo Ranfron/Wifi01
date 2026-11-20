@@ -74,6 +74,8 @@ class SessionActivity : AppCompatActivity() {
     private var lastSendReady = false
     private var lastReceiveReady = false
     private var lastActive = false
+    private var unfinishedOpen = false
+    private var unfinishedMore = 0
 
     private val picker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -130,6 +132,10 @@ class SessionActivity : AppCompatActivity() {
         binding.btnSendFiles.setOnClickListener { picker.launch(arrayOf("*/*")) }
         binding.btnLowBand.setOnClickListener { transferHub().requestLowBand() }
         binding.btnLog.setOnClickListener { showLog() }
+        binding.rowUnfinishedHeader.setOnClickListener {
+            unfinishedOpen = !unfinishedOpen
+            applyUnfinishedOpen()
+        }
         binding.btnMode.setOnClickListener { hub.setFastMode(!hub.state.value.fastMode) }
         cardOut.btnCancelTransfer.setOnClickListener { hub.cancelOut() }
         cardIn.btnCancelTransfer.setOnClickListener { hub.cancelIn() }
@@ -434,10 +440,18 @@ class SessionActivity : AppCompatActivity() {
             0
         }
         val filePercent = if (active.fileSize > 0) (active.fileBytes * 100 / active.fileSize).toInt() else 100
+        val sending = active.direction == Direction.OUT
         card.tvCardLabel.setText(label)
-        card.ivDirection.setImageResource(
-            if (active.direction == Direction.OUT) R.drawable.ic_upload else R.drawable.ic_download
-        )
+        // Blue for sending, teal for receiving. A card never changes direction, so this is applied once.
+        if (card.ivDirection.tag != sending) {
+            card.ivDirection.tag = sending
+            val accent = getColor(if (sending) R.color.dir_send else R.color.dir_receive)
+            card.tvCardLabel.setTextColor(accent)
+            card.ivDirection.setImageResource(if (sending) R.drawable.ic_upload else R.drawable.ic_download)
+            card.ivDirection.setBackgroundResource(if (sending) R.drawable.bg_badge_send else R.drawable.bg_badge_receive)
+            card.ivDirection.setColorFilter(accent)
+            card.progressBar.setIndicatorColor(accent)
+        }
         card.tvFileName.text = active.name
         card.progressBar.setProgressCompat(permille, true)
         card.tvSpeed.text = getString(
@@ -479,9 +493,17 @@ class SessionActivity : AppCompatActivity() {
             binding.cardUnfinished.show(records.unfinished.isNotEmpty())
             binding.tvUnfinishedTitle.text = getString(R.string.tab_unfinished_count, records.unfinished.size)
             val more = records.unfinished.size - shown.size
-            binding.tvUnfinishedMore.show(more > 0)
+            unfinishedMore = more
             binding.tvUnfinishedMore.text = getString(R.string.unfinished_more, more)
+            applyUnfinishedOpen()
         }
+    }
+
+    /** The unfinished list is folded to one line; tapping the header opens it. */
+    private fun applyUnfinishedOpen() {
+        binding.rvUnfinished.show(unfinishedOpen)
+        binding.tvUnfinishedMore.show(unfinishedOpen && unfinishedMore > 0)
+        binding.ivUnfinishedChevron.rotation = if (unfinishedOpen) 180f else 0f
     }
 
     /** Read again whenever a channel or a transfer changes, so the list follows the connection. */

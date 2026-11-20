@@ -1,9 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="brand_primary">#FF8FCDFF</color>
-    <color name="brand_on_primary">#FF003451</color>
-    <color name="brand_primary_container">#FF004B73</color>
-    <color name="brand_on_primary_container">#FFCFE5FF</color>
+    <color name="brand_primary">#FFAEC6FF</color>
+    <color name="brand_on_primary">#FF002D6E</color>
+    <color name="brand_primary_container">#FF0D3F95</color>
+    <color name="brand_on_primary_container">#FFDAE2FF</color>
+
+    <color name="brand_secondary">#FFBEC6DC</color>
+    <color name="brand_on_secondary">#FF283141</color>
+    <color name="brand_secondary_container">#FF3E4759</color>
+    <color name="brand_on_secondary_container">#FFDAE2F9</color>
+
+    <color name="brand_tertiary">#FF80D4D5</color>
+    <color name="brand_on_tertiary">#FF003737</color>
+    <color name="brand_tertiary_container">#FF004F50</color>
+    <color name="brand_on_tertiary_container">#FF9CF0F1</color>
+
+    <color name="md_error">#FFFFB4AB</color>
+    <color name="md_on_error">#FF690005</color>
+    <color name="md_error_container">#FF93000A</color>
+    <color name="md_on_error_container">#FFFFDAD6</color>
+
+    <color name="md_background">#FF0E1218</color>
+    <color name="md_on_surface">#FFE2E5EE</color>
+    <color name="md_surface_variant">#FF3D4350</color>
+    <color name="md_on_surface_variant">#FFC3C8D6</color>
+    <color name="md_outline">#FF8C93A4</color>
+    <color name="md_outline_variant">#FF3A404D</color>
+    <color name="md_container_lowest">#FF0A0D12</color>
+    <color name="md_container_low">#FF141922</color>
+    <color name="md_container">#FF181D27</color>
+    <color name="md_container_high">#FF1F2530</color>
+    <color name="md_container_highest">#FF2A303C</color>
+    <color name="md_inverse_surface">#FFE2E5EE</color>
+    <color name="md_inverse_on_surface">#FF2D323E</color>
+    <color name="md_inverse_primary">#FF0B52C9</color>
+
+    <color name="card_bg">#FF171C26</color>
+    <color name="card_stroke">#FF2A303C</color>
+
+    <color name="hero_start">#FF0B2C6B</color>
+    <color name="hero_end">#FF1553C4</color>
+
+    <color name="action_bg">#FF1B5AD0</color>
+
+    <color name="dir_send">#FF8DB4FF</color>
+    <color name="dir_receive">#FF5FD6C4</color>
+    <color name="send_container">#FF1C3A78</color>
+    <color name="receive_container">#FF0E4A42</color>
+    <color name="badge_neutral">#FF252B37</color>
 
     <color name="status_ok">#FF81C784</color>
     <color name="status_error">#FFFFB4AB</color>

@@ -233,4 +233,5 @@
     <string name="wifi_signal_good">अच्छा</string>
     <string name="wifi_signal_fair">ठीक</string>
     <string name="wifi_signal_weak">कमज़ोर</string>
+    <string name="home_section_connect">दो फ़ोन जोड़ें</string>
 </resources>
