@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import github.leavesczy.wifip2p.R
+import github.leavesczy.wifip2p.util.LocaleHelper
 import github.leavesczy.wifip2p.databinding.ActivityHistoryBinding
 import github.leavesczy.wifip2p.databinding.ItemRecordBinding
 import github.leavesczy.wifip2p.hub.TransferHub
@@ -37,6 +38,11 @@ data class RecordRow(
  * the lists are read when the screen opens and after every action.
  */
 class HistoryActivity : AppCompatActivity() {
+
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
+
 
     private lateinit var binding: ActivityHistoryBinding
     private var records: TransferHub.Records? = null

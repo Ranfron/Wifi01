@@ -2,6 +2,18 @@
 <resources>
     <string name="app_name">WifiP2P</string>
 
+    <string name="home_hero_title">फ़ाइलें तुरंत भेजें</string>
+    <string name="home_section_start">ट्रांसफ़र शुरू करें</string>
+    <string name="home_section_settings">सेटिंग्स</string>
+    <string name="language_title">भाषा</string>
+    <string name="language_hint">ऐप की भाषा। डिफ़ॉल्ट English है।</string>
+    <string name="language_english">English</string>
+    <string name="language_hindi">हिन्दी</string>
+    <string name="language_switch">भाषा</string>
+    <string name="language_changed">भाषा अपडेट हो गई</string>
+    <string name="history">इतिहास और अधूरी फ़ाइलें</string>
+
+
     <!-- Home -->
     <string name="main_subtitle">Wi-Fi Direct से दो फ़ोन के बीच तेज़ फ़ाइल ट्रांसफ़र। इंटरनेट या मोबाइल डेटा की ज़रूरत नहीं।</string>
     <string name="send_files">फ़ाइलें भेजें</string>
@@ -46,6 +58,8 @@
 
     <!-- Receive screen -->
     <string name="mode_fast">तेज़ मोड: 5 GHz बैंड</string>
+    <string name="mode_fast_6">तेज़ मोड: 6 GHz बैंड</string>
+    <string name="mode_softap">फ़ॉलबैक: SoftAP हॉटस्पॉट (P2P उपलब्ध नहीं था)</string>
     <string name="mode_standard">सामान्य मोड (5 GHz बैंड उपलब्ध नहीं था)</string>
     <string name="mode_compat">कम्पैटिबिलिटी मोड (डिफ़ॉल्ट बैंड, पुराने फ़ोन के साथ चलता है)</string>
     <string name="mode_switch_to_compat">कम्पैटिबिलिटी मोड इस्तेमाल करें</string>

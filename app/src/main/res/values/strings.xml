@@ -2,6 +2,18 @@
 <resources>
     <string name="app_name">WifiP2P</string>
 
+
+    <!-- Home (advanced) -->
+    <string name="home_hero_title">Transfer files instantly</string>
+    <string name="home_section_start">Start transfer</string>
+    <string name="home_section_settings">Settings</string>
+    <string name="language_title">Language</string>
+    <string name="language_hint">App language. Default is English.</string>
+    <string name="language_english">English</string>
+    <string name="language_hindi">हिन्दी</string>
+    <string name="language_switch">Language</string>
+    <string name="language_changed">Language updated</string>
+    <string name="history">History &amp; unfinished</string>
     <!-- Home -->
     <string name="main_subtitle">Fast file transfer between two phones over Wi-Fi Direct. No internet or mobile data needed.</string>
     <string name="send_files">Send files</string>
@@ -46,6 +58,8 @@
 
     <!-- Receive screen -->
     <string name="mode_fast">Fast mode: 5 GHz band</string>
+    <string name="mode_fast_6">Fast mode: 6 GHz band</string>
+    <string name="mode_softap">Fallback: SoftAP hotspot (P2P was unavailable)</string>
     <string name="mode_standard">Standard mode (the 5 GHz band was not available)</string>
     <string name="mode_compat">Compatibility mode (default band, works with older phones)</string>
     <string name="mode_switch_to_compat">Use compatibility mode</string>

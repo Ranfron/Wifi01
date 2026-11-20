@@ -18,6 +18,11 @@ import github.leavesczy.wifip2p.p2p.WifiJoiner
 import github.leavesczy.wifip2p.service.TransferService
 import github.leavesczy.wifip2p.storage.UriSendSource
 import github.leavesczy.wifip2p.transfer.ChannelDirection
+import github.leavesczy.wifip2p.caps.BandChoice
+import github.leavesczy.wifip2p.p2p.SoftApHost
+import github.leavesczy.wifip2p.caps.BandSelector
+import github.leavesczy.wifip2p.caps.DeviceCaps
+import github.leavesczy.wifip2p.diagnostics.Diagnostics
 import github.leavesczy.wifip2p.transfer.ConnectCode
 import github.leavesczy.wifip2p.transfer.DuplexLink
 import github.leavesczy.wifip2p.transfer.FileIncomingStore
@@ -94,7 +99,7 @@ class TransferHub(
     private val messageIds = AtomicLong(1)
     private val lock = Any()
 
-    private val tuning = Tuning()
+    private var tuning = Tuning()
 
     // ---- session facts. Derived into the UI state by publish() -----------------------------------
     private var p2p: P2pController? = null
@@ -145,6 +150,22 @@ class TransferHub(
     private var lastInfo: WifiP2pInfo? = null
     private var lastGroup: WifiP2pGroup? = null
     private var qrTarget: ConnectCode? = null
+    private var localCaps: DeviceCaps? = null
+    private var peerCaps: DeviceCaps? = null
+    private var selectedBand: BandChoice = BandChoice.BAND_5GHZ
+    private var softAp: SoftApHost? = null
+    private var usingSoftAp = false
+    private var peakMBps = 0f
+    private var sampleCount = 0
+    private var sumMBps = 0f
+    private val diagRunnable = object : Runnable {
+        override fun run() {
+            sampleDiagnostics()
+            if (sessionPeer != null) {
+                main.postDelayed(this, 2_000)
+            }
+        }
+    }
 
     // Automatic reconnect: the last QR code, or the last device found by search.
     private var lastQrText: String? = null
@@ -213,9 +234,13 @@ class TransferHub(
     /** Ends the session: closes the link, leaves/destroys the Wi-Fi group, stops the service. */
     fun end() {
         main.removeCallbacksAndMessages(null)
+        stopDiagnostics()
         stopLink()
         joiner?.leave()
         joiner = null
+        softAp?.stop()
+        softAp = null
+        usingSoftAp = false
         p2p?.stop()
         p2p = null
         resetFacts()
@@ -303,6 +328,11 @@ class TransferHub(
             return
         }
         lastQrText = text
+        // Capture host capabilities advertised in the QR (v2+)
+        if (code.caps != null) {
+            peerCaps = code.caps
+            log("Peer caps: std=${code.caps.wifiStandard} bands=${code.caps.supportedBands} score=${code.caps.score}")
+        }
         cancelConnectTimeout()
         if (linkKey != "qr:" + code.address) {
             stopLink()
@@ -777,6 +807,16 @@ class TransferHub(
 
         override fun onGroupInfo(group: WifiP2pGroup?) {
             lastGroup = group
+            if (group != null && android.os.Build.VERSION.SDK_INT >= 29) {
+                try {
+                    val freq = group.frequency
+                    val band = github.leavesczy.wifip2p.diagnostics.Diagnostics.frequencyToBand(freq)
+                    mutableState.update {
+                        it.copy(frequencyMhz = freq, bandLabel = if (band != "unknown") band else it.bandLabel)
+                    }
+                    log("Group frequency: ${freq} MHz ($band)")
+                } catch (_: Exception) {}
+            }
             updateQr()
         }
 
@@ -840,7 +880,12 @@ class TransferHub(
             mutableState.update { it.copy(qr = null, qrUnavailable = true) }
             return
         }
-        val payload = ConnectCode(ssid, passphrase, address, Protocol.PORT, mutableState.value.selfName).encode()
+        val caps = localCaps ?: DeviceCaps.measure(app)
+        localCaps = caps
+        val payload = ConnectCode(
+            ssid, passphrase, address, Protocol.PORT,
+            mutableState.value.selfName, caps = caps
+        ).encode()
         if (ConnectCode.parse(payload) == null) {
             // e.g. an unusual group address: the scanner would reject it, so do not show a useless code
             mutableState.update { it.copy(qr = null, qrUnavailable = true) }
@@ -856,8 +901,14 @@ class TransferHub(
             return
         }
         if (groupAttempts >= MAX_GROUP_ATTEMPTS) {
-            errorText = app.getString(R.string.error_group_failed)
-            publish()
+            // P2P keeps failing → try LocalOnlyHotspot (often more reliable on older OEMs)
+            if (!usingSoftAp && android.os.Build.VERSION.SDK_INT >= 26) {
+                log("P2P group failed after $MAX_GROUP_ATTEMPTS attempts — falling back to SoftAP")
+                startSoftApFallback()
+            } else {
+                errorText = app.getString(R.string.error_group_failed)
+                publish()
+            }
             return
         }
         groupAttempts++
@@ -866,15 +917,43 @@ class TransferHub(
         publish()
         main.removeCallbacks(groupWatchdog)
         main.postDelayed(groupWatchdog, GROUP_TIMEOUT_MS)
-        controller.createGroup(prefer5Ghz = mutableState.value.fastMode) { result ->
+        // Measure own capabilities once and prefer the best band we can actually open.
+        val caps = localCaps ?: DeviceCaps.measure(app).also { localCaps = it }
+        selectedBand = when {
+            !mutableState.value.fastMode -> BandChoice.BAND_2_4GHZ
+            6 in caps.supportedBands && caps.apiLevel >= 36 -> BandChoice.BAND_6GHZ
+            5 in caps.supportedBands -> BandChoice.BAND_5GHZ
+            else -> BandChoice.BAND_2_4GHZ
+        }
+        // If we already know peer caps, use the negotiated common best.
+        peerCaps?.let { selectedBand = BandSelector.select(it, caps) }
+
+        controller.createGroup(selectedBand) { result ->
             main.removeCallbacks(groupWatchdog)
             if (!creatingGroup) {
                 return@createGroup // the watchdog already gave up on this attempt
             }
             creatingGroup = false
-            log(if (result.ok) "Group ready (5 GHz: ${result.fiveGhz})" else "Group could not be created (reason ${result.reason})")
+            val bandName = BandSelector.label(selectedBand)
+            log(if (result.ok) "Group ready (requested $bandName, high-band=${result.fiveGhz})" else "Group could not be created (reason ${result.reason})")
             if (result.ok) {
-                mutableState.update { it.copy(fiveGhz = result.fiveGhz) }
+                mutableState.update {
+                    it.copy(
+                        fiveGhz = result.fiveGhz,
+                        bandLabel = bandName
+                    )
+                }
+                // Adaptive pipeline: larger chunks on high-band links
+                val my = localCaps
+                val peer = peerCaps
+                if (my != null) {
+                    tuning = Tuning.forPair(
+                        myScore = my.score,
+                        peerScore = peer?.score ?: my.score,
+                        isHighBand = result.fiveGhz
+                    )
+                    log("Tuning: chunk=${tuning.chunkSize / 1024}KB depth=${tuning.queueDepth}")
+                }
                 controller.refresh()
                 main.postDelayed({ controller.refresh() }, 1_500)
             } else {
@@ -882,6 +961,52 @@ class TransferHub(
             }
             publish()
         }
+    }
+
+    private fun startSoftApFallback() {
+        if (usingSoftAp) return
+        usingSoftAp = true
+        creatingGroup = true
+        errorText = null
+        publish()
+        val host = SoftApHost(app, object : SoftApHost.Listener {
+            override fun onStarted(ssid: String, passphrase: String, gateway: String) {
+                creatingGroup = false
+                groupFormed = true
+                log("SoftAP up: $ssid @ $gateway")
+                val caps = localCaps ?: DeviceCaps.measure(app).also { localCaps = it }
+                val payload = ConnectCode(
+                    ssid, passphrase, gateway, Protocol.PORT,
+                    mutableState.value.selfName, caps = caps
+                ).encode()
+                mutableState.update {
+                    it.copy(
+                        qr = QrInfo(payload, ssid),
+                        qrUnavailable = false,
+                        fiveGhz = true,
+                        bandLabel = "SoftAP"
+                    )
+                }
+                publish()
+            }
+
+            override fun onFailed(reason: String) {
+                creatingGroup = false
+                usingSoftAp = false
+                errorText = reason
+                log("SoftAP failed: $reason")
+                publish()
+            }
+
+            override fun onStopped() {
+                groupFormed = false
+                usingSoftAp = false
+                log("SoftAP stopped")
+                publish()
+            }
+        })
+        softAp = host
+        host.start()
     }
 
     private fun scheduleEnsureGroup(delayMs: Long) {
@@ -997,6 +1122,7 @@ class TransferHub(
                     autoReconnectAttempts = 0
                     cancelConnectTimeout()
                     postMessage(app.getString(R.string.msg_connected_to, peer))
+                    startDiagnostics()
                 }
                 if (direction == ChannelDirection.SEND) {
                     flushPendingShare()
@@ -1011,6 +1137,7 @@ class TransferHub(
                 if (!sendReady && !receiveReady) {
                     val wasConnected = sessionPeer != null
                     sessionPeer = null
+                    stopDiagnostics()
                     if (wasConnected && !cancelOutRequested && !cancelInRequested) {
                         postMessage(app.getString(R.string.msg_connection_ended))
                     }
@@ -1061,6 +1188,7 @@ class TransferHub(
             val id = idOut(progress.index) ?: return
             val count = synchronized(lock) { batchCountOut }
             val active = activeOf(id, Direction.OUT, progress, count)
+            recordSpeedSample(progress.bytesPerSecond)
             mutableState.update { it.copy(activeOut = active) }
         }
 
@@ -1080,6 +1208,7 @@ class TransferHub(
                 postMessage(app.getString(R.string.msg_interrupted_continues, interrupted))
             } else if (batchItems.isNotEmpty() && !cancelOutRequested) {
                 postMessage(app.getString(R.string.msg_sent_summary, done, batchItems.size))
+                reportBottleneck()
             }
         }
     }
@@ -1105,6 +1234,7 @@ class TransferHub(
             val id = idIn(progress.index) ?: return
             val count = synchronized(lock) { batchCountIn }
             val active = activeOf(id, Direction.IN, progress, count)
+            recordSpeedSample(progress.bytesPerSecond)
             mutableState.update { it.copy(activeIn = active) }
         }
 
@@ -1305,6 +1435,71 @@ class TransferHub(
             batchCountOut = 0
             batchCountIn = 0
         }
+    }
+
+    private fun startDiagnostics() {
+        peakMBps = 0f
+        sampleCount = 0
+        sumMBps = 0f
+        main.removeCallbacks(diagRunnable)
+        main.post(diagRunnable)
+    }
+
+    private fun stopDiagnostics() {
+        main.removeCallbacks(diagRunnable)
+    }
+
+    private fun sampleDiagnostics() {
+        val snap = Diagnostics.capture(app, lastGroup)
+        val link = snap.txLinkSpeedMbps
+        val band = when {
+            snap.band != "unknown" -> snap.band
+            mutableState.value.bandLabel.isNotBlank() -> mutableState.value.bandLabel
+            else -> ""
+        }
+        mutableState.update {
+            it.copy(
+                frequencyMhz = if (snap.frequencyMhz > 0) snap.frequencyMhz else it.frequencyMhz,
+                bandLabel = band.ifBlank { it.bandLabel },
+                linkSpeedMbps = if (link > 0) link else it.linkSpeedMbps,
+                rxLinkSpeedMbps = if (snap.rxLinkSpeedMbps > 0) snap.rxLinkSpeedMbps else it.rxLinkSpeedMbps,
+                rssi = if (snap.rssi != 0) snap.rssi else it.rssi,
+                wifiStandardLabel = snap.wifiStandard.ifBlank { it.wifiStandardLabel },
+                transportName = it.transportName.ifBlank { "TCP" }
+            )
+        }
+    }
+
+    private fun recordSpeedSample(bytesPerSecond: Long) {
+        if (bytesPerSecond <= 0) return
+        val mbps = bytesPerSecond / (1024f * 1024f)
+        sampleCount++
+        sumMBps += mbps
+        if (mbps > peakMBps) peakMBps = mbps
+    }
+
+    private fun reportBottleneck() {
+        if (sampleCount == 0) return
+        val avg = sumMBps / sampleCount
+        val state = mutableState.value
+        val link = state.linkSpeedMbps
+        val storage = localCaps?.storageSpeedMBps ?: peerCaps?.storageSpeedMBps ?: 0
+        val cores = localCaps?.cpuCores ?: 4
+        val bottleneck = Diagnostics.identifyBottleneck(avg, link, storage, cores)
+        val label = when (bottleneck) {
+            "wifi" -> "Wi-Fi link"
+            "storage" -> "storage (disk)"
+            "cpu" -> "CPU"
+            else -> "unknown"
+        }
+        val msg = "Avg ${"%.1f".format(avg)} MB/s, peak ${"%.1f".format(peakMBps)} MB/s — limited by $label"
+        mutableState.update { it.copy(bottleneck = msg) }
+        postMessage(msg)
+        log(msg)
+        // reset for next batch
+        peakMBps = 0f
+        sampleCount = 0
+        sumMBps = 0f
     }
 
     /** Turns the facts above into the state the screens render. */

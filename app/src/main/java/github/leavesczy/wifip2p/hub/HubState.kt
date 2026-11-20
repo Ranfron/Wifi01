@@ -91,6 +91,22 @@ data class HubState(
     val fastMode: Boolean = true,
     /** The group really was created on the 5 GHz band. */
     val fiveGhz: Boolean = false,
+    /** Selected / actual band label shown to user (2.4 / 5 / 6 GHz / SoftAP). */
+    val bandLabel: String = "",
+    /** Actual frequency reported by the group (MHz). */
+    val frequencyMhz: Int = 0,
+    /** Live Tx link speed if available. */
+    val linkSpeedMbps: Int = 0,
+    /** Live Rx link speed if available. */
+    val rxLinkSpeedMbps: Int = 0,
+    /** RSSI of the P2P / SoftAP link. */
+    val rssi: Int = 0,
+    /** Wi-Fi standard name from the radio (Wi-Fi 5/6/7…). */
+    val wifiStandardLabel: String = "",
+    /** Transport in use (TCP / SMUFF). */
+    val transportName: String = "TCP",
+    /** Last bottleneck guess after a transfer batch. */
+    val bottleneck: String = "",
     /** Number of files shared from another app that wait for a connection. */
     val pendingShare: Int = 0
 )

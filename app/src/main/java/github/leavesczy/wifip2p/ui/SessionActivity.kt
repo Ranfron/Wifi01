@@ -21,6 +21,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import github.leavesczy.wifip2p.R
+import github.leavesczy.wifip2p.util.LocaleHelper
 import github.leavesczy.wifip2p.databinding.ActivitySessionBinding
 import github.leavesczy.wifip2p.databinding.LayoutTransferCardBinding
 import github.leavesczy.wifip2p.hub.ActiveTransfer
@@ -47,6 +48,11 @@ import kotlinx.coroutines.launch
  * live, open received files. The state lives in [TransferHub], so rotation never disturbs a transfer.
  */
 class SessionActivity : AppCompatActivity() {
+
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
+
 
     private lateinit var binding: ActivitySessionBinding
     private lateinit var permissionFlow: PermissionFlow
@@ -233,6 +239,34 @@ class SessionActivity : AppCompatActivity() {
         showMessage(state)
     }
 
+    private fun buildDiagnosticsLine(state: HubState): String {
+        val parts = ArrayList<String>()
+        if (state.bandLabel.isNotBlank()) {
+            parts.add(state.bandLabel)
+        }
+        if (state.frequencyMhz > 0) {
+            parts.add("${state.frequencyMhz} MHz")
+        }
+        if (state.wifiStandardLabel.isNotBlank() && state.wifiStandardLabel != "?") {
+            parts.add(state.wifiStandardLabel)
+        }
+        if (state.linkSpeedMbps > 0) {
+            parts.add("Link ${state.linkSpeedMbps} Mbps")
+        }
+        if (state.rssi != 0) {
+            parts.add("RSSI ${state.rssi} dBm")
+        }
+        parts.add(state.transportName.ifBlank { "TCP" })
+        if (state.bottleneck.isNotBlank()) {
+            return parts.joinToString(" · ") + "\n" + state.bottleneck
+        }
+        return if (parts.isEmpty()) {
+            getString(R.string.detail_connected)
+        } else {
+            parts.joinToString(" · ")
+        }
+    }
+
     private fun renderStatus(state: HubState) {
         val title: String
         val detail: String
@@ -268,7 +302,7 @@ class SessionActivity : AppCompatActivity() {
 
             Phase.CONNECTED -> {
                 title = getString(R.string.status_connected_to, state.peerName ?: "")
-                detail = getString(R.string.detail_connected)
+                detail = buildDiagnosticsLine(state)
             }
 
             Phase.ERROR -> {
@@ -339,7 +373,9 @@ class SessionActivity : AppCompatActivity() {
         binding.tvMode.setText(
             when {
                 !state.fastMode -> R.string.mode_compat
-                state.fiveGhz -> R.string.mode_fast
+                state.bandLabel.contains("SoftAP", ignoreCase = true) -> R.string.mode_softap
+                state.bandLabel.contains("6") -> R.string.mode_fast_6
+                state.fiveGhz || state.bandLabel.contains("5") -> R.string.mode_fast
                 else -> R.string.mode_standard
             }
         )

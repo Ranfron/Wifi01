@@ -59,7 +59,8 @@ class ConnectCodeTest {
     @Test
     fun fieldValidation() {
         assertNotNull(ConnectCode.parse(code()))
-        assertNull("future version", ConnectCode.parse(code(v = "2")))
+        assertNotNull("v2 is now supported", ConnectCode.parse(code(v = "2")))
+        assertNull("future version", ConnectCode.parse(code(v = "3")))
         assertNull("short passphrase", ConnectCode.parse(code(p = "1234567")))
         assertNull("long passphrase", ConnectCode.parse(code(p = "x".repeat(64))))
         assertNotNull(ConnectCode.parse(code(p = "x".repeat(63))))
