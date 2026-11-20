@@ -35,30 +35,7 @@ data class Tuning(
     /** Reconnect delay: starts at [reconnectMinMs], doubles up to [reconnectMaxMs]. */
     val reconnectMinMs: Long = 400,
     val reconnectMaxMs: Long = 4_000
-) {
-    companion object {
-        /**
-         * Pick more aggressive pipeline settings when both sides look capable.
-         * Still keeps socketBufferSize=0 (kernel auto-tune is usually better on Android).
-         */
-        fun forPair(
-            myScore: Int,
-            peerScore: Int,
-            linkSpeedMbps: Int = 0,
-            isHighBand: Boolean = false
-        ): Tuning {
-            val strong = minOf(myScore, peerScore) >= 600 || (isHighBand && linkSpeedMbps >= 400)
-            return if (strong) {
-                // 1 MB chunks, deeper queue — fewer syscalls, better saturation on 5/6 GHz
-                Tuning(chunkSize = 1024 * 1024, queueDepth = 8)
-            } else if (isHighBand) {
-                Tuning(chunkSize = 768 * 1024, queueDepth = 7)
-            } else {
-                Tuning() // safe defaults for 2.4 GHz / old hardware
-            }
-        }
-    }
-}
+)
 
 class CancelledException(message: String = "Cancelled") : IOException(message)
 

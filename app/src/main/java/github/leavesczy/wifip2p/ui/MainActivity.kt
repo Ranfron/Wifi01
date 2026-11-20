@@ -1,38 +1,35 @@
 package github.leavesczy.wifip2p.ui
 
-import android.content.Context
+
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings as AndroidSettings
 import android.widget.ImageView
-import android.widget.TextView
 import android.widget.Toast
+import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.button.MaterialButtonToggleGroup
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.databinding.ActivityMainBinding
-import github.leavesczy.wifip2p.hub.Role
 import github.leavesczy.wifip2p.storage.DownloadsMedium
 import github.leavesczy.wifip2p.transferHub
-import github.leavesczy.wifip2p.util.LocaleHelper
+import github.leavesczy.wifip2p.hub.Role
 import github.leavesczy.wifip2p.util.PermissionFlow
 import github.leavesczy.wifip2p.util.Permissions
-import github.leavesczy.wifip2p.util.Settings
 import github.leavesczy.wifip2p.util.SystemChecks
 
 /**
- * Home screen. One phone shows a QR code, the other scans it. Language can be English (default)
- * or Hindi. Preference is applied on every Activity via [LocaleHelper.wrap].
+ * Home screen. Both phones start here: one shows a QR code, the other scans it. Files can then be
+ * sent in both directions. If a file was shared from another app, this screen tells the user that
+ * it waits for a connection.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var pendingRole: Role? = null
     private var pendingSearch = false
-    private var applyingLanguageUi = false
 
     private val permissionFlow = PermissionFlow(
         activity = this,
@@ -52,10 +49,6 @@ class MainActivity : AppCompatActivity() {
         }
     )
 
-    override fun attachBaseContext(newBase: Context) {
-        super.attachBaseContext(LocaleHelper.wrap(newBase))
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -64,28 +57,15 @@ class MainActivity : AppCompatActivity() {
         binding.root.applySystemBarPadding()
         binding.tvVersion.text = getString(R.string.app_version, appVersion())
 
-        // Primary actions (big cards + legacy buttons)
-        binding.cardReceive.setOnClickListener { open(Role.HOST) }
-        binding.cardSend.setOnClickListener { open(Role.JOIN) }
         binding.btnShowQr.setOnClickListener { open(Role.HOST) }
         binding.btnScanQr.setOnClickListener { open(Role.JOIN) }
         binding.btnSearchPhones.setOnClickListener { open(Role.JOIN, search = true) }
-        binding.btnHistory.setOnClickListener {
-            startActivity(Intent(this, HistoryActivity::class.java))
-        }
+        binding.btnHistory.setOnClickListener { startActivity(Intent(this, HistoryActivity::class.java)) }
         binding.btnFastAccess.setOnClickListener { openAllFilesAccess() }
-        binding.btnClearShare.setOnClickListener {
-            transferHub().clearPendingShare()
-            refreshChecks()
-        }
-        binding.btnGrantPermission.setOnClickListener { permissionFlow.ensure() }
-        binding.btnWifiSettings.setOnClickListener { SystemChecks.openWifiSettings(this) }
-        binding.btnLocationSettings.setOnClickListener { SystemChecks.openLocationSettings(this) }
-
-        binding.btnLanguage.setOnClickListener { cycleLanguage() }
-        setupLanguageToggle()
+        binding.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
 
         if (savedInstanceState == null) {
+            // Unfinished transfers older than five days are removed when the app is opened, not in the background.
             transferHub().purgeExpired { result ->
                 val removed = result.outgoing + result.incoming
                 if (removed > 0) {
@@ -93,50 +73,21 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        binding.btnClearShare.setOnClickListener { transferHub().clearPendingShare(); refreshChecks() }
+        binding.btnGrantPermission.setOnClickListener { permissionFlow.ensure() }
+        binding.btnWifiSettings.setOnClickListener { SystemChecks.openWifiSettings(this) }
+        binding.btnLocationSettings.setOnClickListener { SystemChecks.openLocationSettings(this) }
     }
 
     override fun onResume() {
         super.onResume()
         refreshChecks()
-        syncLanguageToggle()
     }
 
     private fun open(role: Role, search: Boolean = false) {
         pendingRole = role
         pendingSearch = search
         permissionFlow.ensure()
-    }
-
-    private fun setupLanguageToggle() {
-        syncLanguageToggle()
-        binding.toggleLanguage.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (!isChecked || applyingLanguageUi) return@addOnButtonCheckedListener
-            val tag = if (checkedId == R.id.btnLangHi) LocaleHelper.LANG_HI else LocaleHelper.LANG_EN
-            if (tag == Settings.language(this)) return@addOnButtonCheckedListener
-            Settings.setLanguage(this, tag)
-            Toast.makeText(this, getString(R.string.language_changed), Toast.LENGTH_SHORT).show()
-            // Recreate so all resources reload in the new locale
-            recreate()
-        }
-    }
-
-    private fun syncLanguageToggle() {
-        applyingLanguageUi = true
-        val tag = Settings.language(this)
-        val id = if (tag == LocaleHelper.LANG_HI) R.id.btnLangHi else R.id.btnLangEn
-        binding.toggleLanguage.check(id)
-        binding.btnLanguage.text = LocaleHelper.displayName(tag)
-        applyingLanguageUi = false
-    }
-
-    private fun cycleLanguage() {
-        val next = if (Settings.language(this) == LocaleHelper.LANG_HI) {
-            LocaleHelper.LANG_EN
-        } else {
-            LocaleHelper.LANG_HI
-        }
-        Settings.setLanguage(this, next)
-        recreate()
     }
 
     private fun refreshChecks() {
@@ -156,6 +107,7 @@ class MainActivity : AppCompatActivity() {
         showCheck(binding.ivWifi, binding.tvWifi, wifiOk, R.string.check_wifi_ok, R.string.check_wifi_off)
         binding.btnWifiSettings.show(!wifiOk)
 
+        // Only Android 12L and older need Location for Wi-Fi Direct discovery.
         val locationRelevant = Build.VERSION.SDK_INT < 33
         binding.rowLocation.show(locationRelevant)
         if (locationRelevant) {
@@ -168,6 +120,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Fast file access: writing straight into Downloads (Android 11 and newer needs "All files access"). */
     private fun refreshFastAccess() {
         val fast = DownloadsMedium.fastAccess()
         binding.tvFastAccess.text = getString(if (fast) R.string.fast_access_on else R.string.fast_access_off)
@@ -175,17 +128,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openAllFilesAccess() {
-        val intent = Intent(
-            AndroidSettings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-            Uri.parse("package:$packageName")
-        )
+        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
         try {
             startActivity(intent)
         } catch (_: Exception) {
-            startActivity(Intent(AndroidSettings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
     }
 
+    /** The installed build. Both phones must show the same version to connect. */
     @Suppress("DEPRECATION")
     private fun appVersion(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"

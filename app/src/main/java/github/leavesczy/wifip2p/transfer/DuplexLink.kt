@@ -57,6 +57,14 @@ class DuplexLink(
     private val sender = AtomicReference<SenderSession?>(null)
     private val admission = Admission(tuning.admissionIdleMs)
 
+    /** Host side: the nonce of the current QR code. Null accepts every guest; an empty token (found by search) is accepted. */
+    @Volatile
+    var accessToken: String? = null
+
+    /** Guest side: the nonce of the QR code this phone scanned. Empty when the host was found by search. */
+    @Volatile
+    var guestToken: String = ""
+
     @Volatile
     private var serverSocket: ServerSocket? = null
 
@@ -174,7 +182,12 @@ class DuplexLink(
     private fun handleIncoming(socket: Socket) {
         try {
             SocketOptions.apply(socket, tuning)
-            val guest = Handshake.asHost(socket, deviceName, tuning.handshakeTimeoutMs) {
+            val guest = Handshake.asHost(
+                socket,
+                deviceName,
+                tuning.handshakeTimeoutMs,
+                tokenOk = { token -> token.isEmpty() || accessToken == null || token == accessToken }
+            ) {
                 admission.admit(socket.inetAddress)
             }
             // The guest sends on its SENDER connection: that is where this phone receives, and vice versa.
@@ -185,6 +198,8 @@ class DuplexLink(
             }
         } catch (_: VersionMismatchException) {
             tell { onIncompatible() }
+        } catch (_: StaleCodeException) {
+            tell { onStaleCode() }
         } catch (_: Throwable) {
             // not admitted, bad HELLO, timeout, or the channel simply ended: drop the connection
         } finally {
@@ -203,7 +218,7 @@ class DuplexLink(
                 socket.connect(InetSocketAddress(address, port), tuning.connectTimeoutMs)
                 SocketOptions.apply(socket, tuning)
                 val myRole = if (direction == ChannelDirection.SEND) Protocol.ROLE_SENDER else Protocol.ROLE_RECEIVER
-                host = Handshake.asGuest(socket, myRole, deviceName, tuning.handshakeTimeoutMs)
+                host = Handshake.asGuest(socket, myRole, deviceName, tuning.handshakeTimeoutMs, guestToken)
                 attempts = 0
             } catch (_: VersionMismatchException) {
                 closeQuietly(socket)

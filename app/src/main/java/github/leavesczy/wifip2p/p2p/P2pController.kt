@@ -1,5 +1,7 @@
 package github.leavesczy.wifip2p.p2p
 
+import github.leavesczy.wifip2p.band.Band
+
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -9,7 +11,6 @@ import android.net.MacAddress
 import android.net.wifi.WifiManager
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
-import github.leavesczy.wifip2p.caps.BandChoice
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pGroup
 import android.net.wifi.p2p.WifiP2pInfo
@@ -25,7 +26,7 @@ import java.security.SecureRandom
 
 data class P2pPeer(val name: String, val address: String, val status: Int)
 
-data class GroupResult(val ok: Boolean, val fiveGhz: Boolean, val reason: Int)
+data class GroupResult(val ok: Boolean, val band: Band?, val reason: Int)
 
 /**
  * Thin, lifecycle-independent wrapper around [WifiP2pManager]. Everything is reported to
@@ -201,10 +202,15 @@ class P2pController(context: Context, private val listener: Listener) {
 
     /**
      * Creates the group this device owns (the receiver does this automatically).
-     * Prefer explicit [BandChoice] so both phones can negotiate the highest common band.
-     * Falls back gracefully when the requested band is unavailable.
+     * On Android 10+ the group is requested on the 5 GHz band, which is the single biggest speed
+     * factor of Wi-Fi Direct: 2.4 GHz is typically 3-6x slower. Falls back to the default group if
+     * the phone or the current Wi-Fi situation does not allow 5 GHz.
      */
-    fun createGroup(band: BandChoice, onDone: (GroupResult) -> Unit) {
+    /**
+     * Builds a group on [band]: the old group is removed first and the answer comes after the new group exists (or
+     * failed). Android 10+ gets the band set explicitly; older systems choose it themselves and report AUTO.
+     */
+    fun createGroup(band: Band, onDone: (GroupResult) -> Unit) {
         removeGroupIfAny { removed ->
             main.postDelayed({
                 if (started) {
@@ -214,10 +220,9 @@ class P2pController(context: Context, private val listener: Listener) {
         }
     }
 
-    /** Backward-compatible wrapper used by older call sites. */
-    fun createGroup(prefer5Ghz: Boolean, onDone: (GroupResult) -> Unit) {
-        val band = if (prefer5Ghz) BandChoice.BAND_5GHZ else BandChoice.AUTO
-        createGroup(band, onDone)
+    /** Removes the current group, if there is one. Answers true when a group was removed. */
+    fun removeGroup(done: (removed: Boolean) -> Unit) {
+        removeGroupIfAny(done)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -340,127 +345,80 @@ class P2pController(context: Context, private val listener: Listener) {
     private fun supports5Ghz(): Boolean {
         val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return false
         return try {
-            wifi.is5GHzBandSupported
+            wifi.is5GHzBandSupported()
         } catch (_: Exception) {
             false
         }
     }
 
-    private fun supports6Ghz(): Boolean {
-        if (Build.VERSION.SDK_INT < 30) return false
-        val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return false
-        return try {
-            wifi.is6GHzBandSupported
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun doCreate(band: BandChoice, onDone: (GroupResult) -> Unit) {
-        val m = manager
-        val ch = channel
-        if (m == null || ch == null) {
-            onDone(GroupResult(false, false, WifiP2pManager.ERROR))
+    private fun doCreate(band: Band, onDone: (GroupResult) -> Unit) {
+        if (band == Band.FIVE_GHZ && !supports5Ghz()) {
+            onDone(GroupResult(false, null, NO_FIVE_GHZ))
             return
         }
-
-        // Try the requested band first, then degrade gracefully.
-        val candidates = when (band) {
-            BandChoice.BAND_6GHZ -> listOf(BandChoice.BAND_6GHZ, BandChoice.BAND_5GHZ, BandChoice.AUTO)
-            BandChoice.BAND_5GHZ -> listOf(BandChoice.BAND_5GHZ, BandChoice.AUTO)
-            BandChoice.BAND_2_4GHZ -> listOf(BandChoice.BAND_2_4GHZ, BandChoice.AUTO)
-            BandChoice.AUTO -> listOf(BandChoice.AUTO)
-        }
-
-        tryBand(candidates, 0, onDone)
-    }
-
-    private fun tryBand(candidates: List<BandChoice>, index: Int, onDone: (GroupResult) -> Unit) {
-        if (index >= candidates.size) {
-            plainCreate(2, onDone)
-            return
-        }
-        val choice = candidates[index]
-        val m = manager ?: return onDone(GroupResult(false, false, WifiP2pManager.ERROR))
-        val ch = channel ?: return onDone(GroupResult(false, false, WifiP2pManager.ERROR))
-
-        if (choice == BandChoice.AUTO || Build.VERSION.SDK_INT < 29) {
-            plainCreate(2, onDone)
-            return
-        }
-
-        val config = try {
-            when (choice) {
-                BandChoice.BAND_6GHZ -> if (Build.VERSION.SDK_INT >= 36 && supports6Ghz()) buildGroupConfig(BandChoice.BAND_6GHZ) else null
-                BandChoice.BAND_5GHZ -> if (supports5Ghz()) buildGroupConfig(BandChoice.BAND_5GHZ) else null
-                BandChoice.BAND_2_4GHZ -> buildGroupConfig(BandChoice.BAND_2_4GHZ)
-                else -> null
+        val explicit = Build.VERSION.SDK_INT >= 29 && band != Band.AUTO
+        val config = if (explicit) {
+            try {
+                buildGroupConfig(band)
+            } catch (_: Exception) {
+                null
             }
-        } catch (_: Exception) {
+        } else {
             null
         }
-
-        if (config == null) {
-            tryBand(candidates, index + 1, onDone)
+        if (explicit && config == null) {
+            onDone(GroupResult(false, null, WifiP2pManager.ERROR))
             return
         }
-
-        try {
-            m.createGroup(ch, config, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() {
-                    val isHigh = choice == BandChoice.BAND_5GHZ || choice == BandChoice.BAND_6GHZ
-                    onDone(GroupResult(true, isHigh, 0))
-                }
-                override fun onFailure(reason: Int) = tryBand(candidates, index + 1, onDone)
-            })
-        } catch (_: Exception) {
-            tryBand(candidates, index + 1, onDone)
-        }
+        createWith(config, if (config != null) band else Band.AUTO, 2, onDone)
     }
 
-    private fun plainCreate(retriesLeft: Int, onDone: (GroupResult) -> Unit) {
+    private fun createWith(
+        config: WifiP2pConfig?,
+        enforced: Band,
+        retriesLeft: Int,
+        onDone: (GroupResult) -> Unit
+    ) {
         val m = manager
         val ch = channel
         if (m == null || ch == null || !started) {
-            onDone(GroupResult(false, false, WifiP2pManager.ERROR))
+            onDone(GroupResult(false, null, WifiP2pManager.ERROR))
             return
         }
-        try {
-            m.createGroup(ch, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() = onDone(GroupResult(true, false, 0))
-                override fun onFailure(reason: Int) {
-                    if (reason == WifiP2pManager.BUSY && retriesLeft > 0) {
-                        main.postDelayed({ plainCreate(retriesLeft - 1, onDone) }, 1_000)
-                    } else {
-                        onDone(GroupResult(false, false, reason))
-                    }
+        val listener = object : WifiP2pManager.ActionListener {
+            override fun onSuccess() = onDone(GroupResult(true, enforced, 0))
+
+            override fun onFailure(reason: Int) {
+                if (reason == WifiP2pManager.BUSY && retriesLeft > 0) {
+                    main.postDelayed({ createWith(config, enforced, retriesLeft - 1, onDone) }, 1_000)
+                } else {
+                    onDone(GroupResult(false, null, reason))
                 }
-            })
+            }
+        }
+        try {
+            if (config != null) {
+                m.createGroup(ch, config, listener)
+            } else {
+                m.createGroup(ch, listener)
+            }
         } catch (_: SecurityException) {
-            onDone(GroupResult(false, false, WifiP2pManager.ERROR))
+            onDone(GroupResult(false, null, WifiP2pManager.ERROR))
         }
     }
 
     @RequiresApi(29)
-    private fun buildGroupConfig(band: BandChoice): WifiP2pConfig {
+    private fun buildGroupConfig(band: Band): WifiP2pConfig {
         val random = SecureRandom()
         fun token(length: Int): String {
             val builder = StringBuilder(length)
             repeat(length) { builder.append(ALPHABET[random.nextInt(ALPHABET.length)]) }
             return builder.toString()
         }
-        val operatingBand = when (band) {
-            BandChoice.BAND_6GHZ -> {
-                // Available from API 36
-                if (Build.VERSION.SDK_INT >= 36) {
-                    WifiP2pConfig.GROUP_OWNER_BAND_6GHZ
-                } else {
-                    WifiP2pConfig.GROUP_OWNER_BAND_5GHZ
-                }
-            }
-            BandChoice.BAND_5GHZ -> WifiP2pConfig.GROUP_OWNER_BAND_5GHZ
-            BandChoice.BAND_2_4GHZ -> WifiP2pConfig.GROUP_OWNER_BAND_2GHZ
-            BandChoice.AUTO -> WifiP2pConfig.GROUP_OWNER_BAND_AUTO
+        val operatingBand = if (band == Band.FIVE_GHZ) {
+            WifiP2pConfig.GROUP_OWNER_BAND_5GHZ
+        } else {
+            WifiP2pConfig.GROUP_OWNER_BAND_2GHZ
         }
         return WifiP2pConfig.Builder()
             .setNetworkName("DIRECT-" + token(2) + "-WifiP2P-" + token(4))
@@ -478,6 +436,7 @@ class P2pController(context: Context, private val listener: Listener) {
     }
 
     private companion object {
+        const val NO_FIVE_GHZ = -100
         const val ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
         val NOOP = object : WifiP2pManager.ActionListener {

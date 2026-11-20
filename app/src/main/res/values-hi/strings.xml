@@ -2,18 +2,6 @@
 <resources>
     <string name="app_name">WifiP2P</string>
 
-    <string name="home_hero_title">फ़ाइलें तुरंत भेजें</string>
-    <string name="home_section_start">ट्रांसफ़र शुरू करें</string>
-    <string name="home_section_settings">सेटिंग्स</string>
-    <string name="language_title">भाषा</string>
-    <string name="language_hint">ऐप की भाषा। डिफ़ॉल्ट English है।</string>
-    <string name="language_english">English</string>
-    <string name="language_hindi">हिन्दी</string>
-    <string name="language_switch">भाषा</string>
-    <string name="language_changed">भाषा अपडेट हो गई</string>
-    <string name="history">इतिहास और अधूरी फ़ाइलें</string>
-
-
     <!-- Home -->
     <string name="main_subtitle">Wi-Fi Direct से दो फ़ोन के बीच तेज़ फ़ाइल ट्रांसफ़र। इंटरनेट या मोबाइल डेटा की ज़रूरत नहीं।</string>
     <string name="send_files">फ़ाइलें भेजें</string>
@@ -26,7 +14,7 @@
     <string name="check_location_off">लोकेशन बंद है। आस-पास के डिवाइस खोजने के लिए Android को इसकी ज़रूरत है।</string>
     <string name="grant">अनुमति दें</string>
     <string name="tips_title">सबसे तेज़ स्पीड के लिए टिप्स</string>
-    <string name="tips">1. पाने वाले फ़ोन में पहले “फ़ाइलें पाएँ” खोलें।\n2. भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, डिवाइस खोजें और पाने वाले फ़ोन पर टैप करें। पाने वाले फ़ोन पर निमंत्रण स्वीकार करें।\n3. किसी भी प्रकार की जितनी चाहें उतनी फ़ाइलें चुनें, या Gallery/Files से सीधे “WifiP2P से भेजें” द्वारा शेयर करें।\n4. दोनों फ़ोन पास रखें (कुछ मीटर के भीतर) और दोनों की स्क्रीन चालू रखें। Android 10+ फ़ोन अपने-आप तेज़ 5 GHz बैंड इस्तेमाल करते हैं।\n5. मिली हुई फ़ाइलें ऐप में रहती हैं: इतिहास से खोलें या Downloads में कॉपी करें।</string>
+    <string name="tips">1. पाने वाले फ़ोन में पहले “फ़ाइलें पाएँ” खोलें।\n2. भेजने वाले फ़ोन में “फ़ाइलें भेजें” खोलें, डिवाइस खोजें और पाने वाले फ़ोन पर टैप करें। पाने वाले फ़ोन पर निमंत्रण स्वीकार करें।\n3. किसी भी प्रकार की जितनी चाहें उतनी फ़ाइलें चुनें, या Gallery/Files से सीधे “WifiP2P से भेजें” द्वारा शेयर करें।\n4. दोनों फ़ोन पास रखें (कुछ मीटर के भीतर) और दोनों की स्क्रीन चालू रखें। Android 10+ फ़ोन अपने-आप तेज़ 5 GHz बैंड इस्तेमाल करते हैं।\n5. मिली हुई फ़ाइलें Downloads/WifiP2P में सेव होती हैं: इतिहास से खोलें।</string>
 
     <!-- Common -->
     <string name="cancel">रद्द करें</string>
@@ -58,8 +46,6 @@
 
     <!-- Receive screen -->
     <string name="mode_fast">तेज़ मोड: 5 GHz बैंड</string>
-    <string name="mode_fast_6">तेज़ मोड: 6 GHz बैंड</string>
-    <string name="mode_softap">फ़ॉलबैक: SoftAP हॉटस्पॉट (P2P उपलब्ध नहीं था)</string>
     <string name="mode_standard">सामान्य मोड (5 GHz बैंड उपलब्ध नहीं था)</string>
     <string name="mode_compat">कम्पैटिबिलिटी मोड (डिफ़ॉल्ट बैंड, पुराने फ़ोन के साथ चलता है)</string>
     <string name="mode_switch_to_compat">कम्पैटिबिलिटी मोड इस्तेमाल करें</string>
@@ -141,7 +127,7 @@
     <string name="search_phones">फ़ोन खोजें</string>
     <string name="send_waiting">कनेक्शन का इंतज़ार…</string>
     <string name="session_empty">भेजी और पाई गई फ़ाइलें यहाँ दिखेंगी।
-मिली हुई फ़ाइलें ऐप में रहती हैं: इतिहास से खोलें या Downloads में कॉपी करें।</string>
+मिली हुई फ़ाइलें Downloads/WifiP2P में सेव होती हैं: इतिहास से खोलें।</string>
     <string name="show_qr">QR कोड दिखाएँ</string>
     <string name="show_qr_hint">जिस फ़ोन से कनेक्शन बनेगा उस पर इसे इस्तेमाल करें। दूसरा फ़ोन यह कोड स्कैन करेगा।</string>
     <string name="status_connecting">%1$s से जुड़ रहा है…</string>
@@ -196,4 +182,26 @@
     <string name="fast_access_off">तेज़ फ़ाइल एक्सेस: बंद। इसके बिना कई फ़ोन पर ट्रांसफ़र बहुत धीमा होता है। पूरी स्पीड के लिए "All files access" दें।</string>
     <string name="fast_access_button">तेज़ फ़ाइल एक्सेस दें</string>
     <string name="unfinished_more">इतिहास में %1$d और</string>
+    <string name="settings_title">सेटिंग्स</string>
+    <string name="settings_language">भाषा</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_hi">हिन्दी</string>
+    <string name="settings_language_hinglish">Hinglish</string>
+    <string name="settings_connection">कनेक्शन</string>
+    <string name="settings_fast_mode">5 GHz को पहले चुनें (तेज़)</string>
+    <string name="settings_fast_mode_hint">बंद करने पर कंपैटिबिलिटी मोड चलेगा, जो केवल 2.4 GHz वाले पुराने फ़ोन के लिए है।</string>
+    <string name="settings_storage">स्टोरेज</string>
+    <string name="settings_about">जानकारी</string>
+    <string name="guest_no_five">आपका फ़ोन 5 GHz सपोर्ट नहीं करता। दूसरे फ़ोन पर “Low band QR” दबाएँ, फिर नया QR कोड स्कैन करें।</string>
+    <string name="join_five_failed">5 GHz पर कनेक्ट नहीं हुआ। दूसरे फ़ोन से “Low band QR” बनवाएँ, फिर नया QR कोड स्कैन करें।</string>
+    <string name="host_creating">ग्रुप बन रहा है…</string>
+    <string name="host_removing">ग्रुप को 2.4 GHz वाले ग्रुप से बदला जा रहा है…</string>
+    <string name="host_note_five_failed">5 GHz पर ग्रुप नहीं बना, इसलिए 2.4 GHz इस्तेमाल होगा। दूसरे फ़ोन पर यह नया QR कोड स्कैन करें।</string>
+    <string name="host_note_low_band">2.4 GHz ग्रुप बन गया है। दूसरे फ़ोन पर यह नया QR कोड स्कैन करें।</string>
+    <string name="host_note_no_five">इस फ़ोन पर 5 GHz सपोर्ट नहीं है, इसलिए 2.4 GHz इस्तेमाल होगा।</string>
+    <string name="low_band_button">Low band QR (2.4 GHz)</string>
+    <string name="qr_band_five">बैंड: 5 GHz (तेज़)</string>
+    <string name="qr_band_two">बैंड: 2.4 GHz</string>
+    <string name="qr_band_auto">बैंड: अपने-आप</string>
+    <string name="msg_qr_expired">यह QR कोड पुराना है। दूसरे फ़ोन पर नया QR कोड स्कैन करें।</string>
 </resources>

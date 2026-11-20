@@ -257,6 +257,13 @@ class RecordingLink : LinkListener {
         incompatible++
     }
 
+    @Volatile
+    var stale = 0
+
+    override fun onStaleCode() {
+        stale++
+    }
+
     override fun onFailed(detail: String) {
         failures.add(detail)
     }

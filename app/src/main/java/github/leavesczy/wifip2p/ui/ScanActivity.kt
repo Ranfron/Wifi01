@@ -16,7 +16,6 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import github.leavesczy.wifip2p.R
-import github.leavesczy.wifip2p.util.LocaleHelper
 import github.leavesczy.wifip2p.databinding.ActivityScanBinding
 import github.leavesczy.wifip2p.qr.QrDecoder
 import github.leavesczy.wifip2p.transfer.ConnectCode
@@ -30,11 +29,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  * offline and without Google Play services.
  */
 class ScanActivity : AppCompatActivity() {
-
-    override fun attachBaseContext(newBase: android.content.Context) {
-        super.attachBaseContext(LocaleHelper.wrap(newBase))
-    }
-
 
     private lateinit var binding: ActivityScanBinding
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()

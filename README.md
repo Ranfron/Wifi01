@@ -56,6 +56,17 @@ v1: both phones must run the same version of the app.
 * **Duplicates**: a picked file gets an identity from its name, size and the bytes at both ends. The same file is
   recognised when it is sent again, and it is not sent or saved twice. Delete the file from Downloads to send it again.
 
+## Wi-Fi band, language and settings
+
+* **Band**: the host builds its group on 5 GHz when this phone and the setting allow it. The QR code says which band
+  the group is on (5 GHz, 2.4 GHz, or automatic on Android 9 and older, where the app cannot choose). A phone without
+  5 GHz refuses a 5 GHz code before it tries to join, and says so.
+* **Fallbacks are never silent**: if 5 GHz fails, the host builds a 2.4 GHz group and says so on its screen. The
+  *Low band QR (2.4 GHz)* button on the host screen does the same on purpose.
+* **New QR, new token**: every group that is ready gets a new token, which is in the QR code and in the connection
+  handshake. A phone that scanned an older code is refused.
+* **Language**: English is the default. Settings offers English, Hindi and Hinglish (Hindi in Latin letters).
+
 ## Build
 
 * **Android Studio**: open this folder, *Build > Build Bundle(s) / APK(s) > Build APK(s)*.

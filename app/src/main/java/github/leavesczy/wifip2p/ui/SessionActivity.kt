@@ -1,5 +1,7 @@
 package github.leavesczy.wifip2p.ui
 
+import github.leavesczy.wifip2p.band.Band
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -21,7 +23,6 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import github.leavesczy.wifip2p.R
-import github.leavesczy.wifip2p.util.LocaleHelper
 import github.leavesczy.wifip2p.databinding.ActivitySessionBinding
 import github.leavesczy.wifip2p.databinding.LayoutTransferCardBinding
 import github.leavesczy.wifip2p.hub.ActiveTransfer
@@ -48,11 +49,6 @@ import kotlinx.coroutines.launch
  * live, open received files. The state lives in [TransferHub], so rotation never disturbs a transfer.
  */
 class SessionActivity : AppCompatActivity() {
-
-    override fun attachBaseContext(newBase: android.content.Context) {
-        super.attachBaseContext(LocaleHelper.wrap(newBase))
-    }
-
 
     private lateinit var binding: ActivitySessionBinding
     private lateinit var permissionFlow: PermissionFlow
@@ -132,6 +128,7 @@ class SessionActivity : AppCompatActivity() {
         binding.btnSearch.setOnClickListener { hub.discoverPeers() }
         binding.btnDisconnect.setOnClickListener { hub.disconnect() }
         binding.btnSendFiles.setOnClickListener { picker.launch(arrayOf("*/*")) }
+        binding.btnLowBand.setOnClickListener { transferHub().requestLowBand() }
         binding.btnLog.setOnClickListener { showLog() }
         binding.btnMode.setOnClickListener { hub.setFastMode(!hub.state.value.fastMode) }
         cardOut.btnCancelTransfer.setOnClickListener { hub.cancelOut() }
@@ -239,34 +236,6 @@ class SessionActivity : AppCompatActivity() {
         showMessage(state)
     }
 
-    private fun buildDiagnosticsLine(state: HubState): String {
-        val parts = ArrayList<String>()
-        if (state.bandLabel.isNotBlank()) {
-            parts.add(state.bandLabel)
-        }
-        if (state.frequencyMhz > 0) {
-            parts.add("${state.frequencyMhz} MHz")
-        }
-        if (state.wifiStandardLabel.isNotBlank() && state.wifiStandardLabel != "?") {
-            parts.add(state.wifiStandardLabel)
-        }
-        if (state.linkSpeedMbps > 0) {
-            parts.add("Link ${state.linkSpeedMbps} Mbps")
-        }
-        if (state.rssi != 0) {
-            parts.add("RSSI ${state.rssi} dBm")
-        }
-        parts.add(state.transportName.ifBlank { "TCP" })
-        if (state.bottleneck.isNotBlank()) {
-            return parts.joinToString(" · ") + "\n" + state.bottleneck
-        }
-        return if (parts.isEmpty()) {
-            getString(R.string.detail_connected)
-        } else {
-            parts.joinToString(" · ")
-        }
-    }
-
     private fun renderStatus(state: HubState) {
         val title: String
         val detail: String
@@ -302,7 +271,7 @@ class SessionActivity : AppCompatActivity() {
 
             Phase.CONNECTED -> {
                 title = getString(R.string.status_connected_to, state.peerName ?: "")
-                detail = buildDiagnosticsLine(state)
+                detail = getString(R.string.detail_connected)
             }
 
             Phase.ERROR -> {
@@ -373,9 +342,7 @@ class SessionActivity : AppCompatActivity() {
         binding.tvMode.setText(
             when {
                 !state.fastMode -> R.string.mode_compat
-                state.bandLabel.contains("SoftAP", ignoreCase = true) -> R.string.mode_softap
-                state.bandLabel.contains("6") -> R.string.mode_fast_6
-                state.fiveGhz || state.bandLabel.contains("5") -> R.string.mode_fast
+                state.fiveGhz -> R.string.mode_fast
                 else -> R.string.mode_standard
             }
         )
@@ -403,7 +370,8 @@ class SessionActivity : AppCompatActivity() {
     /** Host: shows the QR code as soon as the group is ready. Join: no QR. */
     private fun renderQr(state: HubState) {
         val qr = state.qr
-        val showCard = state.role == Role.HOST && qr != null && state.phase != Phase.CONNECTED
+        val showCard = state.role == Role.HOST && (qr != null || state.hostBusy != null) && state.phase != Phase.CONNECTED
+        binding.btnLowBand.show(state.role == Role.HOST && qr?.band == Band.FIVE_GHZ)
         binding.cardQr.show(showCard)
         if (qr != null && state.role == Role.HOST) {
             if (qr.payload != lastQrPayload) {
@@ -412,6 +380,12 @@ class SessionActivity : AppCompatActivity() {
             }
             binding.tvQrCaption.setText(R.string.qr_caption)
             binding.tvQrNetwork.text = getString(R.string.qr_network, qr.ssid)
+            binding.tvQrNote.text = listOfNotNull(getString(bandLabel(qr.band)), qr.note).joinToString("\n")
+        }
+        if (qr == null && state.role == Role.HOST && state.hostBusy != null) {
+            binding.tvQrCaption.text = state.hostBusy
+            binding.tvQrNetwork.text = ""
+            binding.tvQrNote.text = ""
         }
         if (state.role == Role.HOST && state.qrUnavailable && state.phase != Phase.CONNECTED) {
             binding.tvEmpty.show(true)
@@ -525,6 +499,12 @@ class SessionActivity : AppCompatActivity() {
         RecordRows.perform(this, hub, row, primary) {
             binding.root.postDelayed({ refreshUnfinished() }, 300)
         }
+    }
+
+    private fun bandLabel(band: Band): Int = when (band) {
+        Band.FIVE_GHZ -> R.string.qr_band_five
+        Band.TWO_POINT_FOUR_GHZ -> R.string.qr_band_two
+        Band.AUTO -> R.string.qr_band_auto
     }
 
     /** The recent connection events, so a failure on this phone can be explained (and copied). */

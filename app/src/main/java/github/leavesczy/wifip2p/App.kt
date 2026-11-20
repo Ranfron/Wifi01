@@ -9,6 +9,9 @@ import github.leavesczy.wifip2p.storage.UriSendSource
 import github.leavesczy.wifip2p.transfer.FileIncomingStore
 import github.leavesczy.wifip2p.transfer.HistoryLog
 import github.leavesczy.wifip2p.transfer.OutgoingLedger
+import github.leavesczy.wifip2p.util.Settings
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import java.io.File
 
 class App : Application() {
@@ -18,6 +21,8 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // English unless the user chose otherwise (the phone language is not followed)
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(Settings.language(this)))
         TransferService.ensureChannel(this)
         // Files that had to be staged for a previous (killed) session are useless now.
         UriSendSource.clearStaging(this)

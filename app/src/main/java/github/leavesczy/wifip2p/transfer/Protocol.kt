@@ -146,13 +146,20 @@ private inline fun <T> decode(frame: Frame, expectedType: Int, block: (DataInput
 }
 
 /** First message sent by both sides right after the TCP connection is up. */
-data class Hello(val role: Int, val deviceName: String, val version: Int = Protocol.VERSION) {
+data class Hello(
+    val role: Int,
+    val deviceName: String,
+    val version: Int = Protocol.VERSION,
+    /** The nonce of the QR code the guest scanned; empty when the guest found the host by search. */
+    val token: String = ""
+) {
 
     fun toFrame(): Frame = Frame(Protocol.TYPE_HELLO, encode {
         it.writeInt(Protocol.MAGIC)
         it.writeShort(version)
         it.writeByte(role)
         it.writeUTF(deviceName.take(64))
+        it.writeUTF(token.take(32))
     })
 
     companion object {
@@ -165,7 +172,8 @@ data class Hello(val role: Int, val deviceName: String, val version: Int = Proto
                 throw VersionMismatchException("The two phones run different versions of the app - update both")
             }
             val role = it.readUnsignedByte()
-            Hello(role = role, deviceName = it.readUTF(), version = version)
+            val name = it.readUTF()
+            Hello(role = role, deviceName = name, version = version, token = it.readUTF())
         }
     }
 }

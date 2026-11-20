@@ -698,4 +698,25 @@ class DuplexLinkTest {
         assertTrue("resumed at ${firstOfResume.fileBytes}, stored $stored", firstOfResume.fileBytes >= stored)
         assertEquals(file.sha256(), sha256(File(restarted.dir, "restart.bin")))
     }
+
+    @Test
+    fun aGuestWithAnOldQrCodeIsRefusedAndTheCurrentOneConnects() {
+        val port = freePort()
+        val host = phone("Host-Phone")
+        host.duplex.accessToken = "current1"
+        host.duplex.startHost(port)
+        host.link.await("host listening") { host.link.listening }
+
+        val oldGuest = phone("Old-Guest")
+        oldGuest.duplex.guestToken = "old-token"
+        oldGuest.duplex.startGuest("127.0.0.1", port)
+        host.link.await("stale code reported", 10_000) { host.link.stale > 0 }
+        assertEquals(0, host.link.readyCount(ChannelDirection.RECEIVE))
+        oldGuest.duplex.stop()
+
+        val newGuest = phone("New-Guest")
+        newGuest.duplex.guestToken = "current1"
+        newGuest.duplex.startGuest("127.0.0.1", port)
+        waitFullyConnected(host, newGuest)
+    }
 }
