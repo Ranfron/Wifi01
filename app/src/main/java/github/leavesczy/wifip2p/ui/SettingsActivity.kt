@@ -1,18 +1,23 @@
 package github.leavesczy.wifip2p.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import github.leavesczy.wifip2p.R
 import github.leavesczy.wifip2p.databinding.ActivitySettingsBinding
 import github.leavesczy.wifip2p.storage.DownloadsMedium
 import github.leavesczy.wifip2p.transferHub
 import github.leavesczy.wifip2p.util.Settings
+import github.leavesczy.wifip2p.wifi.WifiReader
 
 /** Language, connection and storage choices. Changing the language recreates the screens in the new language. */
 class SettingsActivity : AppCompatActivity() {
@@ -55,6 +60,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         binding.btnFastAccess.setOnClickListener { openAllFilesAccess() }
+        binding.btnWifiInfo.setOnClickListener { showWifiInfo() }
         binding.tvVersion.text = getString(R.string.app_version, appVersion())
     }
 
@@ -63,6 +69,20 @@ class SettingsActivity : AppCompatActivity() {
         val fast = DownloadsMedium.fastAccess()
         binding.tvFastAccess.text = getString(if (fast) R.string.fast_access_on else R.string.fast_access_off)
         binding.btnFastAccess.visibility = if (fast) android.view.View.GONE else android.view.View.VISIBLE
+    }
+
+    /** Reads the Wi-Fi now (every time) and shows it; the text can be copied, for example to share it. */
+    private fun showWifiInfo() {
+        val text = WifiInfoText.render(this, WifiReader.read(this))
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.wifi_info_title)
+            .setMessage(text)
+            .setPositiveButton(R.string.copy) { _, _ ->
+                getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("WifiP2P Wi-Fi info", text))
+                Toast.makeText(this, R.string.log_copied, Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(R.string.close, null)
+            .show()
     }
 
     private fun openAllFilesAccess() {

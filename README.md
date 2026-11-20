@@ -67,6 +67,13 @@ v1: both phones must run the same version of the app.
   handshake. A phone that scanned an older code is refused.
 * **Language**: English is the default. Settings offers English, Hindi and Hinglish (Hindi in Latin letters).
 
+## Wi-Fi info
+
+Settings has a *Wi-Fi info* button. It shows this phone's Wi-Fi network, band and channel, signal, link speed, Wi-Fi
+standard, IP address, and whether 5 GHz and Wi-Fi Direct are supported. Android hides the network name unless the app
+has the Location permission; the app does not ask for it, so the name is shown as hidden. Values Android does not give
+are left out.
+
 ## Build
 
 * **Android Studio**: open this folder, *Build > Build Bundle(s) / APK(s) > Build APK(s)*.
