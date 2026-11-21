@@ -29,6 +29,16 @@ data class P2pPeer(val name: String, val address: String, val status: Int)
 data class GroupResult(val ok: Boolean, val band: Band?, val reason: Int)
 
 /**
+ * Where a joining phone tells Wi-Fi Direct to look for the other phone's group (Android 10+). The numbers are the
+ * values of WifiP2pConfig.GROUP_OWNER_BAND_AUTO / _2GHZ / _5GHZ.
+ */
+object ConnectBand {
+    const val AUTO = 0
+    const val TWO_GHZ = 1
+    const val FIVE_GHZ = 2
+}
+
+/**
  * Thin, lifecycle-independent wrapper around [WifiP2pManager]. Everything is reported to
  * [Listener] on the main thread. Permissions are checked by the UI before this class is used.
  */
@@ -179,11 +189,11 @@ class P2pController(context: Context, private val listener: Listener) {
         }
     }
 
-    fun connect(address: String, onResult: (ok: Boolean, reason: Int) -> Unit) {
+    fun connect(address: String, bandHint: Int, onResult: (ok: Boolean, reason: Int) -> Unit) {
         val m = manager ?: return
         val ch = channel ?: return
         try {
-            m.connect(ch, buildConnectConfig(address), action(onResult))
+            m.connect(ch, buildConnectConfig(address, bandHint), action(onResult))
         } catch (_: SecurityException) {
             onResult(false, WifiP2pManager.ERROR)
         }
@@ -300,11 +310,16 @@ class P2pController(context: Context, private val listener: Listener) {
         }
     }
 
-    private fun buildConnectConfig(address: String): WifiP2pConfig {
+    private fun buildConnectConfig(address: String, bandHint: Int): WifiP2pConfig {
         var config: WifiP2pConfig? = null
         if (Build.VERSION.SDK_INT >= 29) {
             config = try {
-                WifiP2pConfig.Builder().setDeviceAddress(MacAddress.fromString(address)).build()
+                val builder = WifiP2pConfig.Builder().setDeviceAddress(MacAddress.fromString(address))
+                // For a joining phone the band only tells the system where to scan for the group.
+                if (bandHint != ConnectBand.AUTO) {
+                    builder.setGroupOperatingBand(bandHint)
+                }
+                builder.build()
             } catch (_: Exception) {
                 null
             }

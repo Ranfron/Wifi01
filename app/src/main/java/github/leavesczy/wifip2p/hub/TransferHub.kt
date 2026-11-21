@@ -10,6 +10,7 @@ import github.leavesczy.wifip2p.band.HostStatus
 import github.leavesczy.wifip2p.band.JoinDecision
 import github.leavesczy.wifip2p.band.Band
 import github.leavesczy.wifip2p.band.Nonces
+import github.leavesczy.wifip2p.p2p.ConnectBand
 import github.leavesczy.wifip2p.p2p.DeviceCaps
 
 import android.app.Application
@@ -134,6 +135,7 @@ class TransferHub(
 
     @Volatile
     private var connectingTo: String? = null
+    private var lastTargetStatus: Int? = null
 
     @Volatile
     private var sendReady = false
@@ -273,21 +275,80 @@ class TransferHub(
             return
         }
         lastPeerAddress = peer.address
+        lastTargetStatus = null
         joinMethod = JoinMethod.SEARCH
         connectingTo = peer.name
         errorText = null
         publish()
+        log("Search: connecting to \"${peer.name}\" (${peer.address}), it is ${peerStatusName(peer.status)}")
         controller.stopDiscovery()
-        controller.connect(peer.address) { ok, reason ->
+        // A group or half-finished attempt of this phone itself would make Wi-Fi Direct refuse the request.
+        controller.removeGroup { removed ->
+            if (removed) {
+                log("Search: removed an old Wi-Fi Direct group of this phone first")
+            }
+            main.postDelayed({ attemptConnect(peer, 0) }, if (removed) 800L else 300L)
+        }
+    }
+
+    /**
+     * One try of the Wi-Fi Direct invitation. Wi-Fi Direct sometimes refuses at once (busy, device not in its list yet,
+     * group on another band), so a refused request is repeated up to [CONNECT_BAND_HINTS] times with a fresh search in
+     * between and a different place to look for the other phone's group. Every step goes to the connection log.
+     */
+    private fun attemptConnect(peer: P2pPeer, attempt: Int) {
+        val controller = p2p ?: return
+        // the user may have left, cancelled or switched to the QR code while this try was waiting
+        if (connectingTo == null || joinMethod != JoinMethod.SEARCH || mutableState.value.role != Role.JOIN) {
+            return
+        }
+        val hint = CONNECT_BAND_HINTS[attempt]
+        log("Search: try ${attempt + 1} of ${CONNECT_BAND_HINTS.size} (looking for the group on ${bandHintName(hint)})")
+        controller.connect(peer.address, hint) { ok, reason ->
+            if (connectingTo == null || joinMethod != JoinMethod.SEARCH) {
+                return@connect
+            }
             if (ok) {
+                log("Search: Wi-Fi Direct sent the invitation - the other phone has to accept it")
                 scheduleConnectTimeout()
+                return@connect
+            }
+            log("Search: Wi-Fi Direct refused the request, reason $reason (${reasonName(reason)})")
+            val retryable = reason == WifiP2pManager.ERROR || reason == WifiP2pManager.BUSY
+            if (retryable && attempt + 1 < CONNECT_BAND_HINTS.size) {
+                controller.discover { _, _ -> }
+                main.postDelayed({ attemptConnect(peer, attempt + 1) }, RETRY_DELAY_MS)
             } else {
                 connectingTo = null
                 joinMethod = JoinMethod.NONE
-                postMessage(app.getString(R.string.msg_connect_failed, reasonText(reason)))
+                postMessage(
+                    app.getString(R.string.msg_connect_failed, reasonText(reason)) + " " +
+                            app.getString(R.string.msg_try_qr_instead)
+                )
                 publish()
             }
         }
+    }
+
+    private fun peerStatusName(status: Int): String = when (status) {
+        WifiP2pDevice.CONNECTED -> "connected"
+        WifiP2pDevice.INVITED -> "invited"
+        WifiP2pDevice.FAILED -> "failed"
+        WifiP2pDevice.AVAILABLE -> "available"
+        else -> "unavailable"
+    }
+
+    private fun reasonName(reason: Int): String = when (reason) {
+        WifiP2pManager.ERROR -> "ERROR"
+        WifiP2pManager.P2P_UNSUPPORTED -> "UNSUPPORTED"
+        WifiP2pManager.BUSY -> "BUSY"
+        else -> "OTHER"
+    }
+
+    private fun bandHintName(hint: Int): String = when (hint) {
+        ConnectBand.FIVE_GHZ -> "5 GHz"
+        ConnectBand.TWO_GHZ -> "2.4 GHz"
+        else -> "any band"
     }
 
     // ---- join: QR code ----------------------------------------------------------------------------
@@ -771,6 +832,14 @@ class TransferHub(
                 compareBy<P2pPeer>({ it.status != WifiP2pDevice.AVAILABLE }, { it.name.lowercase() })
             )
             mutableState.update { it.copy(peers = sorted) }
+            val target = lastPeerAddress
+            if (target != null && mutableState.value.role == Role.JOIN && connectingTo != null) {
+                val status = sorted.firstOrNull { it.address == target }?.status
+                if (status != lastTargetStatus) {
+                    lastTargetStatus = status
+                    log("Search: the other phone is now " + (status?.let { peerStatusName(it) } ?: "not in the list"))
+                }
+            }
             // Android 9 and older: the phone named in the QR code is connected to automatically.
             val wantedName = pendingPeerName
             if (wantedName != null && connectingTo == null && sessionPeer == null) {
@@ -833,6 +902,12 @@ class TransferHub(
             }
             publish()
             return
+        }
+        if (!groupFormed) {
+            log(
+                "Wi-Fi Direct group is up: this phone is " + (if (info.isGroupOwner) "the owner" else "a client") +
+                        ", owner address ${info.groupOwnerAddress?.hostAddress}"
+            )
         }
         groupFormed = true
         groupAttempts = 0
@@ -982,10 +1057,11 @@ class TransferHub(
         cancelConnectTimeout()
         val runnable = Runnable {
             if (!groupFormed && connectingTo != null) {
+                log("Search: no answer from the other phone within ${CONNECT_TIMEOUT_MS / 1000} s")
                 connectingTo = null
                 joinMethod = JoinMethod.NONE
                 p2p?.disconnect()
-                postMessage(app.getString(R.string.msg_connect_timeout))
+                postMessage(app.getString(R.string.msg_connect_timeout) + " " + app.getString(R.string.msg_try_qr_instead))
                 publish()
             }
         }
@@ -1448,6 +1524,10 @@ class TransferHub(
         const val MAX_REJOIN_ATTEMPTS = 8
         const val MAX_AUTO_RECONNECTS = 8
         const val CONNECT_TIMEOUT_MS = 60_000L
+        const val RETRY_DELAY_MS = 2_500L
+
+        /** Where each try looks for the other phone's group: anywhere first, then only 5 GHz, then only 2.4 GHz. */
+        val CONNECT_BAND_HINTS = intArrayOf(ConnectBand.AUTO, ConnectBand.FIVE_GHZ, ConnectBand.TWO_GHZ)
         const val GROUP_TIMEOUT_MS = 25_000L
         const val EXPIRY_MS = 5L * 24 * 60 * 60 * 1000
         const val LOG_CAPACITY = 300

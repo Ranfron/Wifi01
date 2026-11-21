@@ -234,4 +234,5 @@
     <string name="wifi_signal_fair">ठीक</string>
     <string name="wifi_signal_weak">कमज़ोर</string>
     <string name="home_section_connect">दो फ़ोन जोड़ें</string>
+    <string name="msg_try_qr_instead">कुछ फ़ोन पर खोज से कनेक्शन नहीं बनता। दूसरे फ़ोन का QR कोड स्कैन करने पर कनेक्शन सीधे बन जाता है।</string>
 </resources>

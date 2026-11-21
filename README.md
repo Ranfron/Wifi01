@@ -42,6 +42,22 @@ The whole UI was redesigned without touching the transfer engine, Wi-Fi Direct c
 * **Settings**: grouped cards; the 5 GHz option is a switch.
 * **Launcher icon**: new adaptive icon (gradient, signal rings, two-way arrows) with a monochrome layer for themed icons.
 
+## Search (Wi-Fi Direct invitation)
+
+*Search phones* does not use the QR code. The joining phone asks Wi-Fi Direct to connect to the host's device, and the
+host has to accept the system dialog **"Invitation to connect"**. Because this goes through the phones' own Wi-Fi Direct
+stack, some phones refuse it more often than the QR join (which connects straight to the network).
+
+What the app does to make it as reliable as it can be:
+
+* the joining phone removes any old group of its own before it asks,
+* a request that Wi-Fi Direct refuses at once is repeated up to 3 times, each time after a fresh search and with a
+  different hint where to look for the host's group (any band, only 5 GHz, only 2.4 GHz),
+* every step is written to the connection log (the **i** button on the session screen, then *Copy*): the attempts, the
+  reason code, the status of the other phone and the moment the group comes up.
+
+If it still fails, the QR code always works, and the log shows exactly where the search connection stopped.
+
 ## Connection reliability, resume and history
 
 * **Heartbeats**: an idle or busy phone sends a small heartbeat every 3 s. Silence for 20 s means the other phone is gone,

@@ -218,4 +218,5 @@
     <string name="wifi_signal_fair">theek</string>
     <string name="wifi_signal_weak">kamzor</string>
     <string name="home_section_connect">Do phones jodein</string>
+    <string name="msg_try_qr_instead">Kuch phones par search se connection nahi banta. Doosre phone ka QR code scan karne par connection seedha ban jata hai.</string>
 </resources>
